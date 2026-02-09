@@ -1,101 +1,146 @@
-use portable_pty::{
-    native_pty_system, CommandBuilder, MasterPty, PtyPair, PtySize, PtySystem, SlavePty,
-};
-use std::ffi::{CStr, CString};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize, SlavePty};
+use std::ffi::CStr;
 use std::io::{Read, Write};
-use std::os::unix::ffi::OsStrExt; // for Path-like, but we use String here
-use std::panic::catch_unwind;
-use std::path::Path;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
-// Opaque handles
-type MasterHandle = *mut Box<dyn MasterPty + Send>;
-type ChildHandle = *mut Box<dyn portable_pty::Child + Send>;
+// Opaque structs for FFI
+struct Master {
+    inner: Box<dyn MasterPty + Send>,
+}
+struct Slave {
+    inner: Box<dyn SlavePty + Send>,
+}
+struct Child {
+    inner: Box<dyn portable_pty::Child + Send + Sync>,
+}
+struct Reader {
+    inner: Box<dyn Read + Send>,
+}
+struct Writer {
+    inner: Box<dyn Write + Send>,
+}
 
-// Combined create and spawn
+// Opaque handles for FFI
+type MasterHandle = *mut Master;
+type SlaveHandle = *mut Slave;
+type ChildHandle = *mut Child;
+type ReaderHandle = *mut Reader;
+type WriterHandle = *mut Writer;
+
+// Open PTY pair, return master and slave handles via out params
+// Returns 0 on success, -1 on error
 #[no_mangle]
-pub extern "C" fn pty_open_and_spawn(
-    cmd_ptr: *const libc::c_char,
-    args_ptr: *const *const libc::c_char,
+pub extern "C" fn pty_open(
+    rows: u16,
+    cols: u16,
     master_out: *mut MasterHandle,
-    child_out: *mut ChildHandle,
-) -> libc::c_int {
-    catch_unwind(|| unsafe {
+    slave_out: *mut SlaveHandle,
+) -> i32 {
+    let result = catch_unwind(AssertUnwindSafe(|| {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
-                rows: 24,
-                cols: 80,
+                rows,
+                cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
             .unwrap();
+        unsafe {
+            *master_out = Box::into_raw(Box::new(Master { inner: pair.master }));
+            *slave_out = Box::into_raw(Box::new(Slave { inner: pair.slave }));
+        }
+        0
+    }));
+    match result {
+        Ok(_) => 0,
+        Err(_) => -1,
+    }
+}
 
-        let cmd_cstr = CStr::from_ptr(cmd_ptr);
+// Spawn command on slave, consumes slave handle (no need to free slave after)
+// Returns child handle or null on error
+#[no_mangle]
+pub extern "C" fn pty_spawn(slave: SlaveHandle, cmd: *const libc::c_char) -> ChildHandle {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        let slave_struct = Box::from_raw(slave);
+        let slave_box = slave_struct.inner;
+        let cmd_cstr = CStr::from_ptr(cmd);
         let cmd_str = cmd_cstr.to_string_lossy().into_owned();
-
-        let mut builder = CommandBuilder::new(cmd_str);
-
-        let mut i = 0;
-        while !(*args_ptr.offset(i)).is_null() {
-            let arg_cstr = CStr::from_ptr(*args_ptr.offset(i));
-            builder.arg(arg_cstr.to_string_lossy().into_owned());
-            i += 1;
-        }
-
-        let child = pair.slave.spawn_command(builder).unwrap();
-
-        *master_out = Box::into_raw(Box::new(pair.master)) as MasterHandle;
-        *child_out = Box::into_raw(Box::new(child)) as ChildHandle;
-
-        0 // success
-    })
-    .unwrap_or(-1)
+        let builder = CommandBuilder::new(cmd_str);
+        let child = slave_box.spawn_command(builder).unwrap();
+        Box::into_raw(Box::new(Child { inner: child }))
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
-// Read using try_clone_reader
+// Get a cloned reader from master
 #[no_mangle]
-pub extern "C" fn pty_read(master: MasterHandle, buf: *mut u8, len: usize) -> isize {
-    catch_unwind(|| unsafe {
-        let master_ref = &mut *master;
-        if let Ok(mut reader) = master_ref.try_clone_reader() {
-            let slice = std::slice::from_raw_parts_mut(buf, len);
-            reader.read(slice).unwrap_or(0) as isize
-        } else {
-            -1
-        }
-    })
-    .unwrap_or(-1)
+pub extern "C" fn pty_get_reader(master: MasterHandle) -> ReaderHandle {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        let master_struct = &mut *master;
+        let master_ref = &mut master_struct.inner;
+        let reader = master_ref.try_clone_reader().unwrap();
+        Box::into_raw(Box::new(Reader { inner: reader }))
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
-// Similar for write using take_writer()
+// Get the writer from master (can only be called once)
 #[no_mangle]
-pub extern "C" fn pty_write(master: MasterHandle, buf: *const u8, len: usize) -> isize {
-    catch_unwind(|| unsafe {
-        let master_ref = &mut *master;
-        if let Ok(mut writer) = master_ref.take_writer() {
-            let slice = std::slice::from_raw_parts(buf, len);
-            writer.write(slice).unwrap_or(0) as isize
-        } else {
-            -1
-        }
-    })
+pub extern "C" fn pty_get_writer(master: MasterHandle) -> WriterHandle {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        let master_struct = &mut *master;
+        let master_ref = &mut master_struct.inner;
+        let writer = master_ref.take_writer().unwrap();
+        Box::into_raw(Box::new(Writer { inner: writer }))
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+// Read from reader handle
+#[no_mangle]
+pub extern "C" fn pty_read(reader: ReaderHandle, buf: *mut u8, len: usize) -> isize {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        let reader_struct = &mut *reader;
+        let reader_ref = &mut reader_struct.inner;
+        let slice = std::slice::from_raw_parts_mut(buf, len);
+        reader_ref.read(slice).unwrap() as isize
+    }))
     .unwrap_or(-1)
 }
 
+// Write to writer handle
+#[no_mangle]
+pub extern "C" fn pty_write(writer: WriterHandle, buf: *const u8, len: usize) -> isize {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        let writer_struct = &mut *writer;
+        let writer_ref = &mut writer_struct.inner;
+        let slice = std::slice::from_raw_parts(buf, len);
+        writer_ref.write(slice).unwrap() as isize
+    }))
+    .unwrap_or(-1)
+}
+
+// Resize via master
 #[no_mangle]
 pub extern "C" fn pty_resize(master: MasterHandle, rows: u16, cols: u16) {
-    let _ = catch_unwind(|| unsafe {
-        let master_ref = &mut *master;
-        let _ = master_ref.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        });
-    });
+    let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+        let master_struct = &mut *master;
+        let master_ref = &mut master_struct.inner;
+        master_ref
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+    }));
 }
 
+// Free functions
 #[no_mangle]
 pub extern "C" fn pty_free_master(master: MasterHandle) {
     if !master.is_null() {
@@ -106,10 +151,37 @@ pub extern "C" fn pty_free_master(master: MasterHandle) {
 }
 
 #[no_mangle]
+pub extern "C" fn pty_free_slave(slave: SlaveHandle) {
+    if !slave.is_null() {
+        unsafe {
+            drop(Box::from_raw(slave));
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn pty_free_child(child: ChildHandle) {
     if !child.is_null() {
         unsafe {
             drop(Box::from_raw(child));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn pty_free_reader(reader: ReaderHandle) {
+    if !reader.is_null() {
+        unsafe {
+            drop(Box::from_raw(reader));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn pty_free_writer(writer: WriterHandle) {
+    if !writer.is_null() {
+        unsafe {
+            drop(Box::from_raw(writer));
         }
     }
 }
