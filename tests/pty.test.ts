@@ -9,7 +9,7 @@ test("Pty basic operations", async () => {
 	// Write a command
 	const input = "echo 'Hello, Pty!'\n";
 	const written = pty.write(input);
-	expect(written).toBe(Buffer.from(input).length);
+	expect(written).toBe(input.length);
 
 	// Give some time for the shell to process (PTY operations can be async-ish)
 	await new Promise((resolve) => setTimeout(resolve, 100));
