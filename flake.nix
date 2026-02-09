@@ -42,6 +42,7 @@
             bun
             pkg-config # helpful for FFI / native lib discovery
             bashInteractive # for a better shell experience
+            biome
           ];
 
           # Optional: extra environment variables if needed
@@ -54,6 +55,8 @@
             echo "Commands you might want:"
             echo "  cargo build --release     # build the shared library"
             echo "  bun run bun-wrapper/index.js   # run the JS side"
+
+            export BIOME_BINARY="${pkgs.biome}/bin/biome"
           '';
         };
 

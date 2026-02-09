@@ -1,16 +1,17 @@
 {
-  "$schema": "https://json.schemastore.org/package.json",
-  "name": "bun-portable-pty",
-  "module": "index.ts",
-  "type": "module",
-  "scripts": {
-    "install": "cd rust-wrapper && cargo build --release",
-    "lint": "cd rust-wrapper && cargo clippy"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  }
+	"$schema": "https://json.schemastore.org/package.json",
+	"name": "bun-portable-pty",
+	"module": "index.ts",
+	"type": "module",
+	"scripts": {
+		"install": "cd rust-wrapper && cargo build --release",
+		"lint:rust": "cd rust-wrapper && cargo clippy",
+		"check:bun": "biome check"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	}
 }
