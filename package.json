@@ -6,7 +6,8 @@
 	"scripts": {
 		"install": "cd rust-wrapper && cargo build --release",
 		"lint:rust": "cd rust-wrapper && cargo clippy",
-		"check:bun": "biome check"
+		"check:bun": "biome check",
+    "check:ts": "tsc --noEmit"
 	},
 	"devDependencies": {
 		"@types/bun": "latest"

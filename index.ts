@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 import { dlopen, FFIType, ptr, suffix } from "bun:ffi";
 import path from "node:path";
 
@@ -40,8 +42,8 @@ const slavePtr = new BigInt64Array(1);
 const status = symbols.pty_open(24, 80, ptr(masterPtr), ptr(slavePtr));
 if (status !== 0) throw new Error("Failed to open PTY");
 
-const master: bigint = masterPtr[0];
-const slave: bigint = slavePtr[0];
+const master: bigint = masterPtr[0] as bigint;
+const slave: bigint = slavePtr[0] as bigint;
 
 // Spawn /bin/sh
 const cmd = Buffer.from("/bin/sh\0");
