@@ -95,16 +95,13 @@ export class Pty implements Disposable {
 	/**
 	 * Writes data to the PTY.
 	 *
-	 * @param data Buffer to write
+	 * @param data string to write
 	 * @returns Number of bytes written, or -1 on error
 	 */
-	write(data: Buffer): number {
+	write(data: string): number {
 		if (!this.writer) throw new Error("Writer not available");
-		const written = symbols.pty_write(
-			this.writer,
-			data,
-			data.length,
-		);
+		const buf = Buffer.from(data);
+		const written = symbols.pty_write(this.writer, buf, buf.length);
 		return Number(written);
 	}
 
