@@ -71,7 +71,7 @@ export const { symbols } = dlopen(libPath, {
 //   Helper to safely cast number → branded pointer
 // ───────────────────────────────────────────────
 
-export function asHandle<T>(n: number | null | undefined): Pointer<T> | null {
+export function asHandle<T>(n: number | null | undefined): T | null {
 	if (n == null) return null;
-	return n as Pointer<T>;
+	return n as T;
 }
