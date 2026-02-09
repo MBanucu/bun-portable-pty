@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "bun-portable-pty",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "install": "cd rust-wrapper && cargo build --release"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
