@@ -32,3 +32,16 @@ test("Pty basic operations", async () => {
 	// Test resize
 	pty.resize(30, 120);
 });
+
+test("Pty worker messages", async () => {
+	let receivedMessages: string[] = [];
+	using pty = new Pty(24, 80, "/bin/sh", (msg) => receivedMessages.push(msg));
+
+	// Wait for a few messages to be received
+	await new Promise((resolve) => setTimeout(resolve, 3500));
+
+	expect(receivedMessages.length).toBeGreaterThanOrEqual(3);
+	for (const msg of receivedMessages) {
+		expect(msg).toMatch(/Random message: [a-z0-9]+/);
+	}
+});

@@ -1,3 +1,5 @@
+// pty.ts (updated)
+
 import { CString, ptr } from "bun:ffi"; // For ptr if needed in usage
 import {
 	asHandle,
@@ -19,7 +21,7 @@ interface Disposable {
  *
  * Usage example:
  * ```ts
- * const pty = new Pty(24, 80, "/bin/sh");
+ * const pty = new Pty(24, 80, "/bin/sh", (msg) => console.log("Received:", msg));
  * const input = Buffer.from("echo Hello\n");
  * pty.write(input);
  * const output = pty.read(4096);
@@ -33,17 +35,19 @@ export class Pty implements Disposable {
 	private child: ChildHandle;
 	private reader: ReaderHandle;
 	private writer: WriterHandle;
+	private worker: Worker | null = null;
 
 	/**
 	 * Creates a new PTY instance, opens the pair, spawns the command,
-	 * and sets up reader/writer.
+	 * and sets up reader/writer. Optionally starts a worker for random messages.
 	 *
 	 * @param rows Initial rows
 	 * @param cols Initial columns
 	 * @param command The command to spawn (e.g., "/bin/sh")
+	 * @param onMessage Optional callback for worker messages
 	 * @throws Error if any step fails
 	 */
-	constructor(rows: number, cols: number, command: string) {
+	constructor(rows: number, cols: number, command: string, onMessage?: (message: string) => void) {
 		const masterOut = new BigUint64Array(1);
 		const slaveOut = new BigUint64Array(1);
 
@@ -90,6 +94,16 @@ export class Pty implements Disposable {
 		}
 		this.reader = reader;
 		this.writer = writer;
+
+		// Set up optional worker for random messages
+		if (onMessage) {
+			this.worker = new Worker(new URL("./worker.ts", import.meta.url));
+			this.worker.onmessage = (event) => {
+				if (typeof event.data === "string") {
+					onMessage(event.data);
+				}
+			};
+		}
 	}
 
 	/**
@@ -134,6 +148,10 @@ export class Pty implements Disposable {
 	 * Disposes all resources in the correct order.
 	 */
 	[Symbol.dispose](): void {
+		if (this.worker) {
+			this.worker.terminate();
+			this.worker = null;
+		}
 		symbols.pty_free_reader(this.reader);
 		symbols.pty_free_writer(this.writer);
 		symbols.pty_free_child(this.child);
