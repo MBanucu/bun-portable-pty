@@ -4,7 +4,8 @@
   "module": "index.ts",
   "type": "module",
   "scripts": {
-    "install": "cd rust-wrapper && cargo build --release"
+    "install": "cd rust-wrapper && cargo build --release",
+    "lint": "cd rust-wrapper && cargo clippy"
   },
   "devDependencies": {
     "@types/bun": "latest"

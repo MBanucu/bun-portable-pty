@@ -1,3 +1,7 @@
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![allow(private_interfaces)]
+#![allow(dead_code)]
+
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize, SlavePty};
 use std::ffi::CStr;
 use std::io::{Read, Write};
