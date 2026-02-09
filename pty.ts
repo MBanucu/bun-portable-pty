@@ -1,4 +1,4 @@
-import { ptr } from "bun:ffi"; // For ptr if needed in usage
+import { CString, ptr } from "bun:ffi"; // For ptr if needed in usage
 import {
 	asHandle,
 	type ChildHandle,
@@ -29,10 +29,10 @@ interface Disposable {
  * ```
  */
 export class Pty implements Disposable {
-	private master: MasterHandle | null = null;
-	private child: ChildHandle | null = null;
-	private reader: ReaderHandle | null = null;
-	private writer: WriterHandle | null = null;
+	private master: MasterHandle;
+	private child: ChildHandle;
+	private reader: ReaderHandle;
+	private writer: WriterHandle;
 
 	/**
 	 * Creates a new PTY instance, opens the pair, spawns the command,
@@ -47,40 +47,49 @@ export class Pty implements Disposable {
 		const masterOut = new BigUint64Array(1);
 		const slaveOut = new BigUint64Array(1);
 
-		const status = symbols.pty_open(rows, cols, ptr(masterOut), ptr(slaveOut));
+		const status = symbols.pty_open(rows, cols, masterOut, slaveOut);
 		if (status !== 0) {
 			throw new Error(`pty_open failed: ${status}`);
 		}
 
-		this.master = asHandle<MasterHandle>(Number(masterOut[0]));
+		const master = asHandle<MasterHandle>(Number(masterOut[0]));
 		const slave = asHandle<SlaveHandle>(Number(slaveOut[0]));
 
-		if (!this.master || !slave) {
-			this.dispose();
+		if (!master || !slave) {
+			if (master) symbols.pty_free_master(master);
+			if (slave) symbols.pty_free_slave(slave);
 			throw new Error("Failed to get master/slave handles");
 		}
+		this.master = master;
 
 		const cmdBuf = Buffer.from(`${command}\0`);
-		const childRaw = symbols.pty_spawn(slave, ptr(cmdBuf));
-		this.child = asHandle<ChildHandle>(childRaw);
+		const childRaw = symbols.pty_spawn(slave, cmdBuf);
+		const child = asHandle<ChildHandle>(childRaw);
 
-		if (!this.child) {
-			this.dispose();
+		if (!child) {
+			symbols.pty_free_master(master);
+			symbols.pty_free_slave(slave);
 			throw new Error("Failed to spawn command");
 		}
+		this.child = child;
 
 		// Note: slave is consumed by spawn, no need to free
 
 		const readerRaw = symbols.pty_get_reader(this.master);
 		const writerRaw = symbols.pty_get_writer(this.master);
 
-		this.reader = asHandle<ReaderHandle>(readerRaw);
-		this.writer = asHandle<WriterHandle>(writerRaw);
+		const reader = asHandle<ReaderHandle>(readerRaw);
+		const writer = asHandle<WriterHandle>(writerRaw);
 
-		if (!this.reader || !this.writer) {
-			this.dispose();
+		if (!reader || !writer) {
+			if (reader) symbols.pty_free_reader(reader);
+			if (writer) symbols.pty_free_writer(writer);
+			symbols.pty_free_child(this.child);
+			symbols.pty_free_master(this.master);
 			throw new Error("Failed to get reader/writer");
 		}
+		this.reader = reader;
+		this.writer = writer;
 	}
 
 	/**
@@ -93,8 +102,8 @@ export class Pty implements Disposable {
 		if (!this.writer) throw new Error("Writer not available");
 		const written = symbols.pty_write(
 			this.writer,
-			ptr(data),
-			BigInt(data.length),
+			data,
+			data.length,
 		);
 		return Number(written);
 	}
@@ -108,7 +117,7 @@ export class Pty implements Disposable {
 	read(maxBytes: number): Buffer | null {
 		if (!this.reader) throw new Error("Reader not available");
 		const buf = Buffer.alloc(maxBytes);
-		const bytesRead = symbols.pty_read(this.reader, ptr(buf), BigInt(maxBytes));
+		const bytesRead = symbols.pty_read(this.reader, buf, maxBytes);
 		if (Number(bytesRead) <= 0) return null;
 		return buf.subarray(0, Number(bytesRead));
 	}
@@ -128,27 +137,10 @@ export class Pty implements Disposable {
 	 * Disposes all resources in the correct order.
 	 */
 	[Symbol.dispose](): void {
-		if (this.reader) {
-			symbols.pty_free_reader(this.reader);
-			this.reader = null;
-		}
-		if (this.writer) {
-			symbols.pty_free_writer(this.writer);
-			this.writer = null;
-		}
-		if (this.child) {
-			symbols.pty_free_child(this.child);
-			this.child = null;
-		}
-		if (this.master) {
-			symbols.pty_free_master(this.master);
-			this.master = null;
-		}
+		symbols.pty_free_reader(this.reader);
+		symbols.pty_free_writer(this.writer);
+		symbols.pty_free_child(this.child);
+		symbols.pty_free_master(this.master);
 		// Slave was consumed, no free needed
-	}
-
-	// Optional: for non-symbol dispose compatibility
-	dispose(): void {
-		this[Symbol.dispose]();
 	}
 }

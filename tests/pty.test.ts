@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Pty } from "../pty.ts";
 
 test("Pty basic operations", async () => {
-	const pty = new Pty(24, 80, "/bin/sh");
+	using pty = new Pty(24, 80, "/bin/sh");
 
 	// Write a command
 	const input = Buffer.from("echo 'Hello, Pty!'\n");
@@ -29,10 +29,4 @@ test("Pty basic operations", async () => {
 
 	// Test resize
 	pty.resize(30, 120);
-
-	// Dispose
-	pty.dispose();
-
-	// Test disposal doesn't throw
-	expect(() => pty.dispose()).not.toThrow();
 });
