@@ -26,14 +26,14 @@ test("PTY example", () => {
 
 	// Spawn command
 	const cmd = Buffer.from("/bin/sh\0"); // helps type inference a bit
-	const childRaw = symbols.pty_spawn(Number(slave) as any, ptr(cmd));
+	const childRaw = symbols.pty_spawn(slave, ptr(cmd));
 	const child = asHandle<ChildHandle>(childRaw);
 
 	if (!child) throw new Error("Failed to spawn command");
 
 	// Get reader & writer
-	const readerRaw = symbols.pty_get_reader(Number(master) as any);
-	const writerRaw = symbols.pty_get_writer(Number(master) as any);
+	const readerRaw = symbols.pty_get_reader(master);
+	const writerRaw = symbols.pty_get_writer(master);
 
 	const reader = asHandle<ReaderHandle>(readerRaw);
 	const writer = asHandle<WriterHandle>(writerRaw);
@@ -42,33 +42,25 @@ test("PTY example", () => {
 
 	// ─── Write something ───────────────────────────────────────
 	const input = Buffer.from("echo Hello from PTY\n");
-	const written = symbols.pty_write(
-		Number(writer) as any,
-		ptr(input),
-		BigInt(input.length),
-	);
+	const written = symbols.pty_write(writer, ptr(input), BigInt(input.length));
 	console.log("Bytes written:", Number(written));
 
 	// ─── Read output ───────────────────────────────────────────
 	const buf = Buffer.alloc(4096);
-	const bytesRead = symbols.pty_read(
-		Number(reader) as any,
-		ptr(buf),
-		BigInt(buf.length),
-	);
+	const bytesRead = symbols.pty_read(reader, ptr(buf), BigInt(buf.length));
 
 	if (Number(bytesRead) > 0) {
 		console.log("Output:", buf.subarray(0, Number(bytesRead)).toString());
 	}
 
 	// Resize example
-	symbols.pty_resize(Number(master) as any, 30, 120);
+	symbols.pty_resize(master, 30, 120);
 
 	// ─── Cleanup ───────────────────────────────────────────────
 	// Order usually doesn't matter much, but good habit: reverse of creation
-	symbols.pty_free_reader(Number(reader) as any);
-	symbols.pty_free_writer(Number(writer) as any);
-	symbols.pty_free_child(Number(child) as any);
-	symbols.pty_free_master(Number(master) as any);
+	symbols.pty_free_reader(reader);
+	symbols.pty_free_writer(writer);
+	symbols.pty_free_child(child);
+	symbols.pty_free_master(master);
 	// slave was consumed by spawn → no need to free
 });

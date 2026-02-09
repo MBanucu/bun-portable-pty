@@ -1,11 +1,11 @@
-import { type CString, dlopen, FFIType, ptr, suffix } from "bun:ffi";
+import { dlopen, FFIType, suffix } from "bun:ffi";
 import path from "node:path";
 
 // ───────────────────────────────────────────────
 //   Nominal / branded pointer types
 // ───────────────────────────────────────────────
 
-export type Pointer<T = unknown> = number & { __brand?: T };
+export type Pointer<T = unknown> = number & { __pointer__: null; __brand?: T };
 
 export type MasterHandle = Pointer<{ kind: "MasterPty" }>;
 export type SlaveHandle = Pointer<{ kind: "SlavePty" }>;
