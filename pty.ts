@@ -1,6 +1,6 @@
 // pty.ts (updated)
 
-import { CString, ptr, type Pointer } from "bun:ffi"; // For ptr if needed in usage
+import { CString, type Pointer } from "bun:ffi"; // For ptr if needed in usage
 import {
 	asHandle,
 	type ChildHandle,
@@ -47,7 +47,12 @@ export class Pty implements Disposable {
 	 * @param onMessage Optional callback for worker messages
 	 * @throws Error if any step fails
 	 */
-	constructor(rows: number, cols: number, command: string, onMessage?: (message: string) => void) {
+	constructor(
+		rows: number,
+		cols: number,
+		command: string,
+		onMessage?: (message: string) => void,
+	) {
 		const masterOut = new BigUint64Array(1);
 		const slaveOut = new BigUint64Array(1);
 
@@ -66,8 +71,8 @@ export class Pty implements Disposable {
 		}
 		this.master = master;
 
-		const errOut = new BigUint64Array(1);  // Buffer to hold the returned error pointer (number)
-		errOut[0] = BigInt(0);  // Initialize to null
+		const errOut = new BigUint64Array(1); // Buffer to hold the returned error pointer (number)
+		errOut[0] = BigInt(0); // Initialize to null
 		const cmdBuf = Buffer.from(`${command}\0`);
 		const childRaw = symbols.pty_spawn(slave, cmdBuf, errOut);
 		const child = asHandle<ChildHandle>(childRaw);
@@ -76,12 +81,12 @@ export class Pty implements Disposable {
 
 		if (!child) {
 			symbols.pty_free_master(master);
-			const errPtr = Number(errOut[0]) as Pointer;  // Extract the pointer (number)
+			const errPtr = Number(errOut[0]) as Pointer; // Extract the pointer (number)
 			console.log(`pty_spawn failed, error pointer (number): ${errPtr}`);
 			if (errPtr !== 0) {
 				const errMsg = new CString(errPtr);
 				console.error(`Spawn error: ${errMsg}`);
-				symbols.pty_free_err_msg(errPtr);  // Free the native string
+				symbols.pty_free_err_msg(errPtr); // Free the native string
 			} else {
 				console.error("Spawn failed with no error message");
 			}
@@ -115,8 +120,6 @@ export class Pty implements Disposable {
 			};
 			this.worker.postMessage(reader); // Optional initial message
 		}
-
-
 	}
 
 	/**
