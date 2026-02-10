@@ -122,18 +122,24 @@ export class Pty implements Disposable {
 		const exitCodeOut = new Int32Array(1);
 		const signalOut = new Int32Array(1);
 		const errOut = new BigUint64Array(1);
-		const status = symbols.pty_child_try_wait(this.child.handle, exitCodeOut, signalOut, errOut);
+		const status = symbols.pty_child_try_wait(
+			this.child.handle,
+			exitCodeOut,
+			signalOut,
+			errOut,
+		);
 		if (status === -1) {
 			const errMsg = extractErrorMessage(errOut[0]);
 			throw new Error(`pty_child_try_wait failed: ${errMsg}`);
 		} else if (status === 0) {
 			// exited
-			return { exitCode: exitCodeOut[0], signal: signalOut[0] };
+			// biome-ignore lint: style/noNonNullAssertion
+			return { exitCode: exitCodeOut[0]!, signal: signalOut[0]! };
 		} else {
 			// still running
 			return { exitCode: null, signal: null };
 		}
-	}	}
+	}
 
 	/**
 	 * Kills the child process.
