@@ -15,6 +15,17 @@ interface Disposable {
 	[Symbol.dispose](): void;
 }
 
+function extractErrorMessage(errPtrNumber: bigint): string {
+	const errPtr = Number(errPtrNumber) as Pointer;
+	if (errPtr !== 0) {
+		const errMsg = new CString(errPtr).toString();
+		symbols.pty_free_err_msg(errPtr);
+		return errMsg;
+	} else {
+		return "FFI call failed with no error message";
+	}
+}
+
 /**
  * A class wrapper around the PTY FFI functions that manages resources
  * and implements Disposable for automatic cleanup.
@@ -80,17 +91,9 @@ export class Pty implements Disposable {
 		// Note: slave is consumed by spawn, no need to free
 
 		if (!child) {
-			symbols.pty_free_master(master);
-			const errPtr = Number(errOut[0]) as Pointer; // Extract the pointer (number)
-			console.log(`pty_spawn failed, error pointer (number): ${errPtr}`);
-			if (errPtr !== 0) {
-				const errMsg = new CString(errPtr);
-				console.error(`Spawn error: ${errMsg}`);
-				symbols.pty_free_err_msg(errPtr); // Free the native string
-			} else {
-				console.error("Spawn failed with no error message");
-			}
-			throw new Error("Failed to spawn command");
+			symbols.pty_free_master(this.master);
+
+			throw new Error(extractErrorMessage(errOut[0]));
 		}
 		this.child = child;
 
