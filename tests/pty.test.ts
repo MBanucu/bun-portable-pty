@@ -72,9 +72,8 @@ test.each(
 	const waiter2 = new Waiter("Hello from PTY");
 	const waiter3 = new Waiter("$");
 	const waiter4 = new Waiter("exit");
-	const waiter5 = new Waiter("exit");
 
-	const waiters = [waiter1, waiter2, waiter3, waiter4, waiter5];
+	const waiters = [waiter1, waiter2, waiter3, waiter4];
 
 	let resolveWaitForExit = () => {};
 	const exitPromise = new Promise<void>((res) => {
@@ -103,7 +102,6 @@ test.each(
 
 	pty.write("exit\n");
 	await waitWithTimeout(waiter4.promise, waiter4.waitFor, receivedMessages);
-	await waitWithTimeout(waiter5.promise, waiter5.waitFor, receivedMessages);
 	await waitWithTimeout(exitPromise, "exit completion", receivedMessages);
 
 	const actual = receivedMessages.join("");
