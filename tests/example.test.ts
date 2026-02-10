@@ -1,4 +1,4 @@
-import { ptr } from "bun:ffi";
+import { CString, type Pointer, ptr } from "bun:ffi";
 import { test } from "bun:test";
 import {
 	asHandle,
@@ -26,10 +26,24 @@ test("PTY example", () => {
 
 	// Spawn command
 	const cmd = Buffer.from("/bin/sh\0"); // helps type inference a bit
-	const childRaw = symbols.pty_spawn(slave, ptr(cmd));
+	const errOut = new BigUint64Array(1); // Buffer to hold the returned error pointer (number)
+	errOut[0] = BigInt(0); // Initialize to null
+	const childRaw = symbols.pty_spawn(slave, cmd, errOut);
 	const child = asHandle<ChildHandle>(childRaw);
 
-	if (!child) throw new Error("Failed to spawn command");
+	if (!child) {
+		symbols.pty_free_master(master);
+		const errPtr = Number(errOut[0]) as Pointer; // Extract the pointer (number)
+		console.log(`pty_spawn failed, error pointer (number): ${errPtr}`);
+		if (errPtr !== 0) {
+			const errMsg = new CString(errPtr);
+			console.error(`Spawn error: ${errMsg}`);
+			symbols.pty_free_err_msg(errPtr); // Free the native string
+		} else {
+			console.error("Spawn failed with no error message");
+		}
+		throw new Error("Failed to spawn command");
+	}
 
 	// Get reader & writer
 	const readerRaw = symbols.pty_get_reader(master);
