@@ -43,7 +43,7 @@ test.each([
 	using pty = new Pty(24, 80, cmd, (msg) => {
 		msgs += msg;
 		receivedMessages.push(msg);
-		while (waiters.length > 0 && waiters[0]?.test(msgs)) {
+		while (waiters[0]?.test(msgs)) {
 			const waiter = waiters.shift();
 			if (!waiter) break;
 			msgs = msgs.slice(msgs.indexOf(waiter.waitFor) + waiter.waitFor.length);
