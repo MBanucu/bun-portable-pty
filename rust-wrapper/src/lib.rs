@@ -392,14 +392,13 @@ pub extern "C" fn pty_child_wait(
         return -1;
     }
     let result = catch_unwind(AssertUnwindSafe(|| unsafe {
-        let child_struct = &mut *child;
-        match child_struct.inner.try_wait() {
-            Ok(Some(status)) => {
+        let mut child_struct = Box::from_raw(child); // Take ownership, consumes the handle
+        match child_struct.inner.wait() {
+            Ok(status) => {
                 *exit_code_out = if status.success() { 0 } else { 1 };
                 *signal_out = 0;
-                0 // exited
+                0
             }
-            Ok(None) => 1, // still running
             Err(e) => {
                 let err_str = CString::new(e.to_string())
                     .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
@@ -413,7 +412,6 @@ pub extern "C" fn pty_child_wait(
         Err(_) => -1,
     }
 }
-
 #[no_mangle]
 pub extern "C" fn pty_child_kill(child: ChildHandle, out_err_msg: *mut *mut libc::c_char) -> i32 {
     if child.is_null() {

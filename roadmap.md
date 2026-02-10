@@ -104,14 +104,15 @@ The current `pty_spawn` treats the entire `cmd` string as the program path via `
 The current API provides a `ChildHandle` but no way to interact with it beyond freeing. In PTY use cases, callers often need to wait for exit, check status, or kill the process.
 
 - **Suggestion**: Add functions for common `portable_pty::Child` operations:
-  - `pty_child_wait(child: ChildHandle, exit_code_out: *mut i32, signal_out: *mut i32, out_err_msg: *mut *mut libc::c_char) -> i32`: Non-blocking try_wait. Sets `exit_code_out` (or -1 if none), `signal_out` (for signal if killed), returns 0 if exited, 1 if still running, -1 on error.
+  - `pty_child_wait(child: ChildHandle, exit_code_out: *mut i32, signal_out: *mut i32, out_err_msg: *mut *mut libc::c_char) -> i32`: Blocking wait. Waits for the process to exit, sets exit_code_out and signal_out, returns 0 on success, -1 on error. Note: Consumes the child handle; do not use the handle after this call.
+  - `pty_child_try_wait(child: ChildHandle, exit_code_out: *mut i32, signal_out: *mut i32, out_err_msg: *mut *mut libc::c_char) -> i32`: Non-blocking try_wait. Sets exit_code_out (or -1 if none), signal_out (for signal if killed), returns 0 if exited, 1 if still running, -1 on error.
   - `pty_child_kill(child: ChildHandle, out_err_msg: *mut *mut libc::c_char) -> i32`: Calls `kill`, returns 0 on success, -1 on error.
   - `pty_child_is_alive(child: ChildHandle) -> i32`: Returns 1 if alive, 0 if not, -1 on error.
 
-  Example for `pty_child_wait`:
+  Example for `pty_child_try_wait`:
   ```rust
   #[no_mangle]
-  pub extern "C" fn pty_child_wait(
+  pub extern "C" fn pty_child_try_wait(
       child: ChildHandle,
       exit_code_out: *mut i32,
       signal_out: *mut i32,
@@ -121,8 +122,8 @@ The current API provides a `ChildHandle` but no way to interact with it beyond f
           let child_struct = &mut *child;
           match child_struct.inner.try_wait() {
               Ok(Some(status)) => {
-                  *exit_code_out = status.code().unwrap_or(-1);
-                  *signal_out = status.signal().unwrap_or(0);
+                  *exit_code_out = if status.success() { 0 } else { 1 };
+                  *signal_out = 0;
                   0  // Exited
               }
               Ok(None) => 1,  // Still running
@@ -136,7 +137,7 @@ The current API provides a `ChildHandle` but no way to interact with it beyond f
   }
   ```
 
-  Note: `wait()` consumes the child, so use `try_wait()` for non-consuming checks. Callers can loop on `pty_child_wait` until exit, then free the child.
+  Note: `pty_child_wait()` consumes the child handle, so use `pty_child_try_wait()` for non-blocking checks. Callers can loop on `pty_child_try_wait` until exit, then call `pty_child_wait` or free the child.
 
 - **Benefit for Bun:ffi**: Enables JS to manage process lifecycle (e.g., await exit in async code), making the PTY interface complete for terminal emulation or command execution in Bun apps.
 

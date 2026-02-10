@@ -215,6 +215,10 @@ export const { symbols } = dlopen(libPath, {
 		args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
 		returns: FFIType.i32,
 	},
+	pty_child_try_wait: {
+		args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+		returns: FFIType.i32,
+	},
 	pty_child_kill: {
 		args: [FFIType.ptr, FFIType.ptr],
 		returns: FFIType.i32,
