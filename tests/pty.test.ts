@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Pty } from "../pty.ts";
 
 class Waiter {
-	public resolve: () => void = () => { };
+	public resolve: () => void = () => {};
 	public readonly promise: Promise<void> = new Promise<void>((res) => {
 		this.resolve = res;
 	});
@@ -24,17 +24,19 @@ const isWindows = process.platform === "win32";
 
 const testMatrix = isWindows
 	? [
-		{ cmd: "cmd.exe", argv: [] },
-		{ cmd: "powershell.exe", argv: [] },
-		{ cmd: "pwsh.exe", argv: [] },
-	]
+			{ cmd: "cmd.exe", argv: [] },
+			{ cmd: "powershell.exe", argv: [] },
+			{ cmd: "pwsh.exe", argv: [] },
+		]
 	: [
-		{ cmd: "sh", argv: [] },
-		{ cmd: "bash", argv: [] },
-		{ cmd: "/usr/bin/env", argv: ["bash"] },
-	];
+			{ cmd: "sh", argv: [] },
+			{ cmd: "bash", argv: [] },
+			{ cmd: "/usr/bin/env", argv: ["bash"] },
+		];
 
-test.each(testMatrix)("spawn success in interactive terminal: $cmd $argv", async (cmd) => {
+test.each(
+	testMatrix,
+)("spawn success in interactive terminal: $cmd $argv", async (cmd) => {
 	const receivedMessages: string[] = [];
 
 	const waiter1 = new Waiter("$");
@@ -45,7 +47,7 @@ test.each(testMatrix)("spawn success in interactive terminal: $cmd $argv", async
 
 	const waiters = [waiter1, waiter2, waiter3, waiter4, waiter5];
 
-	let resolveWaitForExit = () => { };
+	let resolveWaitForExit = () => {};
 	const exitPromise = new Promise<void>((res) => {
 		resolveWaitForExit = res;
 	});

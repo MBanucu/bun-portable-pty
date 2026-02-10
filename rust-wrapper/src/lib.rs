@@ -7,7 +7,6 @@ use std::ffi::CStr;
 use std::ffi::CString;
 use std::io::{Read, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::ptr;
 
 // Opaque structs for FFI
 struct Master {

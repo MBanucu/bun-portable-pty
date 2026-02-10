@@ -65,7 +65,9 @@ export function pty_open_and_spawn(
 	const argvBuf = Buffer.alloc(argv.length * 8 + 8); // Extra for null terminator if needed
 	const argPtrs = argv.map((arg) => Buffer.from(`${arg}\0`)).map(ptr);
 	for (let i = 0; i < argPtrs.length; i++) {
-		argvBuf.writeBigUInt64LE(BigInt(argPtrs[i]!), i * 8);
+		const ptr = argPtrs[i];
+		if (!ptr) throw new Error("Failed to create pointer for argument");
+		argvBuf.writeBigUInt64LE(BigInt(ptr), i * 8);
 	}
 	argvBuf.writeBigUInt64LE(0n, argv.length * 8); // Optional null terminator
 
