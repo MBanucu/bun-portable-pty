@@ -33,106 +33,95 @@ type ChildHandle = *mut Child;
 type ReaderHandle = *mut Reader;
 type WriterHandle = *mut Writer;
 
-// Open PTY pair, return master and slave handles via out params
-// Returns 0 on success, -1 on error; sets out_err_msg to error string (caller must free) or null
+// Combined function: opens PTY, spawns command, returns master and child.
+// Returns 0 on success, -1 on error; sets out_err_msg (caller frees via pty_free_err_msg).
 #[no_mangle]
-pub extern "C" fn pty_open(
+pub extern "C" fn pty_open_and_spawn(
     rows: u16,
     cols: u16,
+    prog: *const libc::c_char,
+    argv: *const *const libc::c_char,
+    argc: usize,
     master_out: *mut MasterHandle,
-    slave_out: *mut SlaveHandle,
+    child_out: *mut ChildHandle,
     out_err_msg: *mut *mut libc::c_char,
 ) -> i32 {
-    if master_out.is_null() || slave_out.is_null() {
+    if master_out.is_null() || child_out.is_null() || prog.is_null() {
+        let err_str = CString::new("Null pointer provided").unwrap();
+        unsafe {
+            *out_err_msg = err_str.into_raw();
+        }
         return -1;
     }
+
     let result = catch_unwind(AssertUnwindSafe(|| {
         let pty_system = native_pty_system();
-        match pty_system.openpty(PtySize {
+        let pair = match pty_system.openpty(PtySize {
             rows,
             cols,
             pixel_width: 0,
             pixel_height: 0,
         }) {
-            Ok(pair) => {
-                unsafe {
-                    *master_out = Box::into_raw(Box::new(Master { inner: pair.master }));
-                    *slave_out = Box::into_raw(Box::new(Slave { inner: pair.slave }));
-                }
-                0
-            }
+            Ok(p) => p,
             Err(e) => {
                 let err_str = CString::new(e.to_string())
-                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                    .unwrap_or_else(|_| CString::new("Failed to open PTY").unwrap());
                 unsafe {
                     *out_err_msg = err_str.into_raw();
                 }
-                -1
+                return -1;
+            }
+        };
+
+        let prog_cstr = unsafe { CStr::from_ptr(prog) };
+        let prog_str = prog_cstr.to_string_lossy().into_owned();
+        let mut builder = CommandBuilder::new(prog_str);
+
+        // Parse arguments
+        if !argv.is_null() && argc > 0 {
+            let args_slice: &[*const libc::c_char] =
+                unsafe { std::slice::from_raw_parts(argv, argc) };
+            for &arg_ptr in args_slice {
+                if arg_ptr.is_null() {
+                    continue;
+                }
+                let arg_cstr = unsafe { CStr::from_ptr(arg_ptr) };
+                let arg_str = arg_cstr.to_string_lossy().into_owned();
+                builder.arg(arg_str);
             }
         }
+
+        let child = match pair.slave.spawn_command(builder) {
+            Ok(c) => c,
+            Err(e) => {
+                let err_str = CString::new(e.to_string())
+                    .unwrap_or_else(|_| CString::new("Failed to spawn command").unwrap());
+                unsafe {
+                    *out_err_msg = err_str.into_raw();
+                }
+                // Rollback: drop pair (frees master/slave implicitly)
+                drop(pair);
+                return -1;
+            }
+        };
+
+        unsafe {
+            *master_out = Box::into_raw(Box::new(Master { inner: pair.master }));
+            *child_out = Box::into_raw(Box::new(Child { inner: child }));
+        }
+        0
     }));
+
     match result {
         Ok(code) => code,
         Err(_) => {
-            let err_str = CString::new("something is wrong in pty_open").unwrap();
+            let err_str = CString::new("Panic during PTY open/spawn").unwrap();
             unsafe {
                 *out_err_msg = err_str.into_raw();
             }
             -1
         }
     }
-}
-
-// Spawn command on slave, now supporting argv/argc (program arguments)
-// Returns child handle or null on error; sets out_err_msg to error string (caller must free) or null
-#[no_mangle]
-pub extern "C" fn pty_spawn(
-    slave: SlaveHandle,
-    prog: *const libc::c_char,
-    argv: *const *const libc::c_char,
-    argc: usize,
-    out_err_msg: *mut *mut libc::c_char,
-) -> ChildHandle {
-    catch_unwind(AssertUnwindSafe(|| unsafe {
-        let slave_struct = Box::from_raw(slave);
-        let slave_box = slave_struct.inner;
-        let prog_cstr = CStr::from_ptr(prog);
-        let prog_str = prog_cstr.to_string_lossy().into_owned();
-        let mut builder = CommandBuilder::new(prog_str);
-
-        // Parse arguments
-        if argc > 0 {
-            let args_slice: Vec<&CStr> = {
-                let raw_args = std::slice::from_raw_parts(argv, argc);
-                raw_args
-                    .iter()
-                    .filter_map(|&arg_ptr| {
-                        if arg_ptr.is_null() {
-                            None
-                        } else {
-                            Some(CStr::from_ptr(arg_ptr))
-                        }
-                    })
-                    .collect()
-            };
-            for arg_cstr in args_slice {
-                let arg_str = arg_cstr.to_string_lossy().into_owned();
-                builder.arg(arg_str);
-            }
-        }
-
-        let child = match slave_box.spawn_command(builder) {
-            Ok(child) => child,
-            Err(e) => {
-                let err_str = CString::new(e.to_string())
-                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
-                *out_err_msg = err_str.into_raw();
-                return ptr::null_mut();
-            }
-        };
-        Box::into_raw(Box::new(Child { inner: child }))
-    }))
-    .unwrap_or(ptr::null_mut())
 }
 
 // Get a cloned reader from master
@@ -332,15 +321,6 @@ pub extern "C" fn pty_free_master(master: MasterHandle) {
     if !master.is_null() {
         unsafe {
             drop(Box::from_raw(master));
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn pty_free_slave(slave: SlaveHandle) {
-    if !slave.is_null() {
-        unsafe {
-            drop(Box::from_raw(slave));
         }
     }
 }

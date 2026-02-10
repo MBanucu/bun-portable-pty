@@ -1,170 +1,185 @@
-### Error Handling Improvements
-The current implementation relies heavily on `unwrap()` for operations that return `Result`, which can lead to panics if errors occur (e.g., in `pty_open`, `pty_get_reader`, `pty_get_writer`, `pty_read`, `pty_write`, and `pty_resize`). While `catch_unwind` catches these panics and returns fallback values like `-1` or `null`, this loses specific error information and isn't ideal for robust FFI usage in Bun, where JavaScript callers might want more diagnostic details.
+Yes, combining `pty_open` into `pty_spawn` in `lib.rs` makes sense for this project, with some caveats and implementation recommendations below. I'll explain my reasoning step-by-step, why it's a good fit here, potential trade-offs, and how to implement it cleanly while aligning with the project's goals (e.g., robust FFI for Bun, error handling improvements from `roadmap.md`).
 
-- **Suggestion**: Replace `unwrap()` with pattern matching on `Result`. For functions that currently lack error messages (unlike `pty_spawn`), add an optional `out_err_msg: *mut *mut libc::c_char` parameter to return a descriptive error string on failure (similar to `pty_spawn`). Caller must free it via `pty_free_err_msg`.
-  
-  Example for `pty_open`:
-  ```rust
-  #[no_mangle]
-  pub extern "C" fn pty_open(
-      rows: u16,
-      cols: u16,
-      master_out: *mut MasterHandle,
-      slave_out: *mut SlaveHandle,
-      out_err_msg: *mut *mut libc::c_char,
-  ) -> i32 {
-      let result = catch_unwind(AssertUnwindSafe(|| {
-          let pty_system = native_pty_system();
-          match pty_system.openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }) {
-              Ok(pair) => {
-                  unsafe {
-                      *master_out = Box::into_raw(Box::new(Master { inner: pair.master }));
-                      *slave_out = Box::into_raw(Box::new(Slave { inner: pair.slave }));
-                  }
-                  0
-              }
-              Err(e) => {
-                  let err_str = CString::new(e.to_string()).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
-                  unsafe { *out_err_msg = err_str.into_raw(); }
-                  -1
-              }
-          }
-      }));
-      match result {
-          Ok(code) => code,
-          Err(_) => -1,
-      }
-  }
-  ```
+### Why It Makes Sense
+1. **Common Usage Pattern**:
+   - In the current codebase (e.g., `pty.ts` and `tests/pty.test.ts`), every PTY is opened *solely* to immediately spawn a command on the slave. There's no scenario where a PTY is opened without spawning (e.g., for manual slave configuration or non-command use). Combining them reduces boilerplate in the TypeScript/Bun side: one FFI call instead of two.
+   - This aligns with typical PTY libraries (e.g., `portable-pty`'s examples often open + spawn in quick succession). It simplifies the high-level `Pty` class, which is the primary consumer.
 
-  Apply similar changes to other functions (e.g., return `-1` and set `out_err_msg` in `pty_get_reader`, `pty_get_writer`, etc.). For `pty_read` and `pty_write`, return `-1` on `Err` and set an error message if added. This allows Bun's JavaScript side to handle errors gracefully, e.g., via `ffi.CString` for messages.
+2. **Simplifies FFI and Resource Management**:
+   - Slave handles are short-lived: created in `pty_open`, passed to `pty_spawn` (which consumes them via `Box::from_raw` and `spawn_command`), then freed. By combining, you eliminate the slave handle entirely from the FFI API—no need to return it or manage its lifecycle in JS.
+   - Fewer FFI calls mean less overhead (e.g., pointer marshalling, error checking). In Bun's `ffi` (which uses pointers and buffers), this reduces complexity and potential for misuse (e.g., forgetting to free slave).
 
-- **Benefit for Bun:ffi**: JS callers can check return codes and retrieve strings for logging or user-facing errors, reducing silent failures.
+3. **Error Handling and Roadmap Alignment**:
+   - Your `roadmap.md` suggests adding `out_err_msg` to more functions (like `pty_open`) for better diagnostics. Combining lets you handle errors from both steps in one place (e.g., open fails → early error; spawn fails → rollback and error).
+   - It encourages atomic operations: if spawn fails after open, you could auto-free the master/slave in Rust, preventing leaks if JS forgets to clean up.
 
-### Support for Command Arguments in `pty_spawn`
-The current `pty_spawn` treats the entire `cmd` string as the program path via `CommandBuilder::new(cmd_str)`, without supporting arguments. This works for simple commands like `/bin/bash` but fails for commands with args (e.g., `ls -l` would treat `"ls -l"` as the program name, leading to "No such file or directory").
+4. **Project Scope**:
+   - This is a lightweight wrapper for Bun-specific use (e.g., interactive terminals in scripts). Flexibility for "open without spawn" isn't needed based on `README.md`, `pty.ts`, and tests. If advanced needs arise, you could add a separate `pty_open` later.
+   - Keeps the API focused: `pty_spawn` becomes the entrypoint, returning master + child handles directly.
 
-- **Suggestion**: Extend the interface to accept an array of arguments. Add parameters `argv: *const *const libc::c_char` (null-terminated array of C strings) and `argc: usize` (optional, for explicit count; fall back to null-termination scanning if 0).
+### Potential Trade-Offs
+- **Reduced Flexibility**: If future use cases need a PTY without immediate spawning (e.g., custom slave setup), you'd need to reintroduce `pty_open`. But based on the code, this isn't a current need—`roadmap.md` focuses on args, child management, and errors, not slave tweaks.
+- **API Breaking Change**: Existing JS code (e.g., `Pty` constructor) would need updates. But since this is an early-stage project (per `package.json` and no published version), it's low-risk.
+- **Rollback on Failure**: If open succeeds but spawn fails, ensure master/slave are freed in Rust to avoid leaks (JS might not know to free them).
+- No major performance hit—`openpty` + `spawn_command` are cheap.
 
-  Example updated signature and implementation:
-  ```rust
-  #[no_mangle]
-  pub extern "C" fn pty_spawn(
-      slave: SlaveHandle,
-      prog: *const libc::c_char,  // Program path
-      argv: *const *const libc::c_char,  // Optional args array
-      argc: usize,  // 0 if null-terminated
-      out_err_msg: *mut *mut libc::c_char,
-  ) -> ChildHandle {
-      catch_unwind(AssertUnwindSafe(|| unsafe {
-          let slave_struct = Box::from_raw(slave);
-          let slave_box = slave_struct.inner;
-          let prog_cstr = CStr::from_ptr(prog);
-          let prog_str = prog_cstr.to_string_lossy().into_owned();
-          let mut builder = CommandBuilder::new(prog_str);
+If these trade-offs are acceptable (they seem to be for simplification), proceed.
 
-          if !argv.is_null() {
-              let args_slice = if argc > 0 {
-                  std::slice::from_raw_parts(argv, argc)
-              } else {
-                  // Scan for null terminator if argc=0
-                  let mut args = vec![];
-                  let mut ptr = argv;
-                  while !(*ptr).is_null() {
-                      args.push(*ptr);
-                      ptr = ptr.add(1);
-                  }
-                  args
-              };
-              for &arg_ptr in args_slice.iter() {
-                  if arg_ptr.is_null() { break; }
-                  let arg_cstr = CStr::from_ptr(arg_ptr);
-                  let arg_str = arg_cstr.to_string_lossy().into_owned();
-                  builder.arg(arg_str);
-              }
-          }
+### How to Implement It
+Rename/replace `pty_spawn` with a combined function (e.g., `pty_open_and_spawn`). Keep the old signatures temporarily if needed for migration, but aim for a clean API.
 
-          match slave_box.spawn_command(builder) {
-              Ok(child) => Box::into_raw(Box::new(Child { inner: child })),
-              Err(e) => {
-                  let err_str = CString::new(e.to_string()).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
-                  *out_err_msg = err_str.into_raw();
-                  ptr::null_mut()
-              }
-          }
-      })).unwrap_or(ptr::null_mut())
-  }
-  ```
+#### Updated Rust Code (`lib.rs`)
+Integrate `pty_open`'s logic into `pty_spawn`, add `rows`/`cols`, and handle errors/rollback. Incorporate `roadmap.md` suggestions: add args support (`argv`/`argc`), `out_err_msg`, null checks.
 
-  For backward compatibility, keep `cmd` as `prog`, and if no args, it works as before.
+```rust
+// ... (keep existing imports and structs)
 
-- **Benefit for Bun:ffi**: Allows JS to pass arrays like `ffi.pointer(new Uint8Array([...]))` for args, enabling complex commands (e.g., spawning `git clone repo`). This makes the interface more flexible without relying on shell parsing.
+// Combined function: opens PTY, spawns command, returns master and child.
+// Returns 0 on success, -1 on error; sets out_err_msg (caller frees via pty_free_err_msg).
+#[no_mangle]
+pub extern "C" fn pty_open_and_spawn(
+    rows: u16,
+    cols: u16,
+    prog: *const libc::c_char,
+    argv: *const *const libc::c_char,
+    argc: usize,
+    master_out: *mut MasterHandle,
+    child_out: *mut ChildHandle,
+    out_err_msg: *mut *mut libc::c_char,
+) -> i32 {
+    if master_out.is_null() || child_out.is_null() || prog.is_null() {
+        let err_str = CString::new("Null pointer provided").unwrap();
+        unsafe { *out_err_msg = err_str.into_raw(); }
+        return -1;
+    }
 
-### Child Process Management Functions
-The current API provides a `ChildHandle` but no way to interact with it beyond freeing. In PTY use cases, callers often need to wait for exit, check status, or kill the process.
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let pty_system = native_pty_system();
+        let pair = match pty_system.openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        }) {
+            Ok(p) => p,
+            Err(e) => {
+                let err_str = CString::new(e.to_string()).unwrap_or_else(|_| CString::new("Failed to open PTY").unwrap());
+                unsafe { *out_err_msg = err_str.into_raw(); }
+                return -1;
+            }
+        };
 
-- **Suggestion**: Add functions for common `portable_pty::Child` operations:
-  - `pty_child_wait(child: ChildHandle, exit_code_out: *mut i32, signal_out: *mut i32, out_err_msg: *mut *mut libc::c_char) -> i32`: Blocking wait. Waits for the process to exit, sets exit_code_out and signal_out, returns 0 on success, -1 on error. Note: Consumes the child handle; do not use the handle after this call.
-  - `pty_child_try_wait(child: ChildHandle, exit_code_out: *mut i32, signal_out: *mut i32, out_err_msg: *mut *mut libc::c_char) -> i32`: Non-blocking try_wait. Sets exit_code_out (or -1 if none), signal_out (for signal if killed), returns 0 if exited, 1 if still running, -1 on error.
-  - `pty_child_kill(child: ChildHandle, out_err_msg: *mut *mut libc::c_char) -> i32`: Calls `kill`, returns 0 on success, -1 on error.
-  - `pty_child_is_alive(child: ChildHandle) -> i32`: Returns 1 if alive, 0 if not, -1 on error.
+        let prog_cstr = unsafe { CStr::from_ptr(prog) };
+        let prog_str = prog_cstr.to_string_lossy().into_owned();
+        let mut builder = CommandBuilder::new(prog_str);
 
-  Example for `pty_child_try_wait`:
-  ```rust
-  #[no_mangle]
-  pub extern "C" fn pty_child_try_wait(
-      child: ChildHandle,
-      exit_code_out: *mut i32,
-      signal_out: *mut i32,
-      out_err_msg: *mut *mut libc::c_char,
-  ) -> i32 {
-      catch_unwind(AssertUnwindSafe(|| unsafe {
-          let child_struct = &mut *child;
-          match child_struct.inner.try_wait() {
-              Ok(Some(status)) => {
-                  *exit_code_out = if status.success() { 0 } else { 1 };
-                  *signal_out = 0;
-                  0  // Exited
-              }
-              Ok(None) => 1,  // Still running
-              Err(e) => {
-                  let err_str = CString::new(e.to_string()).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
-                  *out_err_msg = err_str.into_raw();
-                  -1
-              }
-          }
-      })).unwrap_or(-1)
-  }
-  ```
+        // Parse arguments (from roadmap suggestion)
+        if !argv.is_null() && argc > 0 {
+            let args_slice: &[ *const libc::c_char] = unsafe { std::slice::from_raw_parts(argv, argc) };
+            for &arg_ptr in args_slice {
+                if arg_ptr.is_null() { continue; }
+                let arg_cstr = unsafe { CStr::from_ptr(arg_ptr) };
+                let arg_str = arg_cstr.to_string_lossy().into_owned();
+                builder.arg(arg_str);
+            }
+        }
 
-  Note: `pty_child_wait()` consumes the child handle, so use `pty_child_try_wait()` for non-blocking checks. Callers can loop on `pty_child_try_wait` until exit, then call `pty_child_wait` or free the child.
+        let child = match pair.slave.spawn_command(builder) {
+            Ok(c) => c,
+            Err(e) => {
+                let err_str = CString::new(e.to_string()).unwrap_or_else(|_| CString::new("Failed to spawn command").unwrap());
+                unsafe { *out_err_msg = err_str.into_raw(); }
+                // Rollback: drop pair (frees master/slave implicitly)
+                drop(pair);
+                return -1;
+            }
+        };
 
-- **Benefit for Bun:ffi**: Enables JS to manage process lifecycle (e.g., await exit in async code), making the PTY interface complete for terminal emulation or command execution in Bun apps.
+        unsafe {
+            *master_out = Box::into_raw(Box::new(Master { inner: pair.master }));
+            *child_out = Box::into_raw(Box::new(Child { inner: child }));
+        }
+        0
+    }));
 
-### Other Minor Improvements
-- **Return Status for `pty_resize`**: Change to return `i32` (0 on success, -1 on error) with optional `out_err_msg`.
-  
-  ```rust
-  #[no_mangle]
-  pub extern "C" fn pty_resize(master: MasterHandle, rows: u16, cols: u16, out_err_msg: *mut *mut libc::c_char) -> i32 {
-      catch_unwind(AssertUnwindSafe(|| unsafe {
-          let master_struct = &mut *master;
-          match master_struct.inner.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }) {
-              Ok(_) => 0,
-              Err(e) => {
-                  let err_str = CString::new(e.to_string()).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
-                  *out_err_msg = err_str.into_raw();
-                  -1
-              }
-          }
-      })).unwrap_or(-1)
-  }
-  ```
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            let err_str = CString::new("Panic during PTY open/spawn").unwrap();
+            unsafe { *out_err_msg = err_str.into_raw(); }
+            -1
+        }
+    }
+}
 
-- **Null Pointer Checks**: Add explicit checks for null inputs (e.g., in `pty_read`, `pty_write`) to return -1 immediately, preventing dereference panics.
+// Remove old pty_open and pty_spawn (or keep for migration)
+// Keep other functions (get_reader, get_writer, read, write, resize, free_*, child_*)
+```
 
-- **Documentation and Examples**: Add doc comments with C signatures and Bun:ffi usage examples (e.g., how to define JS types with `ffi.dlopen` and handle pointers/buffers).
+- **Key Changes**:
+  - Combined open + spawn.
+  - Added args parsing (per roadmap).
+  - Error handling: Sets `out_err_msg` on failures, rolls back resources.
+  - Null checks for safety.
 
-- **Environment Variables**: Optionally extend `pty_spawn` with `envp: *const *const libc::c_char` for custom env, similar to args.
+#### Updated TypeScript/Bun Code (`index.ts` and `pty.ts`)
+Adapt `pty_open` + `pty_spawn` calls to the new function. Update `symbols` in `dlopen`.
 
-These changes would make the interface safer, more feature-complete, and better suited for Bun's JS-FFI integration, while keeping it lightweight.
+In `index.ts`:
+```ts
+// New export
+export function pty_open_and_spawn(rows: number, cols: number, cmd: string, argv: readonly string[] = []) {
+    const masterOut = new BigUint64Array(1);
+    const childOut = new BigUint64Array(1);
+    const errOut = new BigUint64Array(1);
+    const cmdBuf = Buffer.from(`${cmd}\0`);
+    const argvBuf = Buffer.alloc(argv.length * 8 + 8); // Extra for null terminator if needed
+    const argPtrs = argv.map(arg => Buffer.from(`${arg}\0`)).map(ptr);
+    for (let i = 0; i < argPtrs.length; i++) {
+        argvBuf.writeBigUInt64LE(BigInt(argPtrs[i]!), i * 8);
+    }
+    // argvBuf.writeBigUInt64LE(0n, argv.length * 8); // Optional null terminator
+
+    const status = symbols.pty_open_and_spawn(
+        rows, cols, cmdBuf, argvBuf, argPtrs.length, masterOut, childOut, errOut
+    );
+
+    if (status !== 0) {
+        throw new Error(extractErrorMessage(errOut[0]));
+    }
+
+    const master = Number(masterOut[0]) as Pointer;
+    const child = Number(childOut[0]) as Pointer;
+    if (!master || !child) throw new Error("Failed to create handles");
+
+    return { master: new MasterHandle(master), child: new ChildHandle(child) };
+}
+
+// Update dlopen symbols
+// ...
+pty_open_and_spawn: {
+    args: [FFIType.u16, FFIType.u16, FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+    returns: FFIType.i32,
+},
+// Remove old pty_open and pty_spawn
+```
+
+In `pty.ts` (constructor):
+```ts
+// Replace open + spawn
+const { master, child } = pty_open_and_spawn(rows, cols, cmd, argv);
+disposableStack.use(master);
+this.master = master;
+this.child = disposableStack.use(child);
+// No slave needed
+```
+
+- Update tests similarly (remove slave handling).
+- Remove `SlaveHandle` if unused.
+
+### Next Steps
+- Test thoroughly: Update `pty.test.ts` to use the new function; check for leaks (e.g., via `valgrind` in Rust).
+- Docs: Update `README.md` and `roadmap.md` (mark args/error items as done).
+- If you need the separate `pty_open` later, it's easy to extract.
+
+If this doesn't align (e.g., you need slave flexibility), keep them separate but add the roadmap improvements to both. Let me know for code tweaks!

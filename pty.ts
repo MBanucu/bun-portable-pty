@@ -3,8 +3,7 @@ import {
 	type MasterHandle,
 	pty_get_reader,
 	pty_get_writer,
-	pty_open,
-	pty_spawn,
+	pty_open_and_spawn,
 	pty_write,
 	type ReaderHandle,
 	symbols,
@@ -56,11 +55,10 @@ export class Pty implements Disposable {
 	) {
 		using disposableStack = new DisposableStack();
 
-		const { master, slave } = pty_open(rows, cols);
+		const { master, child } = pty_open_and_spawn(rows, cols, cmd, argv);
 		disposableStack.use(master);
 		this.master = master;
-
-		this.child = disposableStack.use(pty_spawn(slave, cmd, argv));
+		this.child = disposableStack.use(child);
 
 		this.reader = disposableStack.use(pty_get_reader(this.master));
 		this.writer = disposableStack.use(pty_get_writer(this.master));
@@ -111,7 +109,6 @@ export class Pty implements Disposable {
 	 */
 	[Symbol.dispose](): void {
 		this.disposableStack.dispose();
-		// Slave was consumed, no free needed
 	}
 
 	/**

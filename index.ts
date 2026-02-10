@@ -35,17 +35,6 @@ export class MasterHandle implements Disposable {
 	}
 }
 
-export class SlaveHandle implements Disposable {
-	readonly handle: Pointer;
-	constructor(handle: Pointer) {
-		this.handle = handle;
-	}
-
-	[Symbol.dispose](): void {
-		symbols.pty_free_slave(this.handle);
-	}
-}
-
 export class ChildHandle implements Disposable {
 	readonly handle: Pointer;
 	constructor(handle: Pointer) {
@@ -63,71 +52,43 @@ const libPath = path.join(
 	`librust_wrapper.${suffix}`,
 );
 
-export function pty_spawn(
-	slave: SlaveHandle,
+export function pty_open_and_spawn(
+	rows: number,
+	cols: number,
 	cmd: string,
-	argv: readonly string[],
+	argv: readonly string[] = [],
 ) {
+	const masterOut = new BigUint64Array(1);
+	const childOut = new BigUint64Array(1);
 	const errOut = new BigUint64Array(1);
-	errOut[0] = BigInt(0);
 	const cmdBuf = Buffer.from(`${cmd}\0`);
-
-	const argvBuf = Buffer.alloc(argv.length * 8);
+	const argvBuf = Buffer.alloc(argv.length * 8 + 8); // Extra for null terminator if needed
 	const argPtrs = argv.map((arg) => Buffer.from(`${arg}\0`)).map(ptr);
 	for (let i = 0; i < argPtrs.length; i++) {
-		const argPtr = argPtrs[i];
-		if (argPtr) argvBuf.writeBigUInt64LE(BigInt(argPtr), i * 8);
+		argvBuf.writeBigUInt64LE(BigInt(argPtrs[i]!), i * 8);
 	}
-	const childRaw = symbols.pty_spawn(
-		slave.handle,
+	argvBuf.writeBigUInt64LE(0n, argv.length * 8); // Optional null terminator
+
+	const status = symbols.pty_open_and_spawn(
+		rows,
+		cols,
 		cmdBuf,
 		argvBuf,
 		argPtrs.length,
+		masterOut,
+		childOut,
 		errOut,
 	);
 
-	if (!childRaw) {
+	if (status !== 0) {
 		throw new Error(extractErrorMessage(errOut[0]));
 	}
 
-	return new ChildHandle(childRaw);
-}
-
-export function pty_open(rows: number, cols: number) {
-	const masterOut = new BigUint64Array(1);
-	const slaveOut = new BigUint64Array(1);
-	const errOut = new BigUint64Array(1);
-	const status = symbols.pty_open(rows, cols, masterOut, slaveOut, errOut);
 	const master = Number(masterOut[0]) as Pointer;
-	const slave = Number(slaveOut[0]) as Pointer;
+	const child = Number(childOut[0]) as Pointer;
+	if (!master || !child) throw new Error("Failed to create handles");
 
-	using disposableStack = new DisposableStack();
-	const masterHandle = master
-		? disposableStack.use(new MasterHandle(master))
-		: null;
-	const slaveHandle = slave
-		? disposableStack.use(new SlaveHandle(slave))
-		: null;
-
-	const errorMessages: string[] = [];
-	if (!masterHandle) {
-		errorMessages.push("pty_open failed to create master handle.");
-	}
-	if (!slaveHandle) {
-		errorMessages.push("pty_open failed to create slave handle.");
-	}
-
-	if (status !== 0) {
-		const errMsg = extractErrorMessage(errOut[0]);
-		throw new Error(`pty_open failed: ${errMsg}`);
-	}
-	if (!masterHandle || !slaveHandle) {
-		throw new Error(errorMessages.join(" "));
-	} else {
-		disposableStack.move();
-	}
-
-	return { master: masterHandle, slave: slaveHandle };
+	return { master: new MasterHandle(master), child: new ChildHandle(child) };
 }
 
 export function pty_get_reader(master: MasterHandle) {
@@ -183,13 +144,18 @@ export function pty_write(writer: WriterHandle, text: string) {
 }
 
 export const { symbols } = dlopen(libPath, {
-	pty_open: {
-		args: [FFIType.u16, FFIType.u16, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+	pty_open_and_spawn: {
+		args: [
+			FFIType.u16,
+			FFIType.u16,
+			FFIType.ptr,
+			FFIType.ptr,
+			FFIType.u64,
+			FFIType.ptr,
+			FFIType.ptr,
+			FFIType.ptr,
+		],
 		returns: FFIType.i32,
-	},
-	pty_spawn: {
-		args: [FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.u64, FFIType.ptr],
-		returns: FFIType.ptr,
 	},
 	pty_get_reader: {
 		args: [FFIType.ptr, FFIType.ptr, FFIType.ptr],
@@ -228,7 +194,6 @@ export const { symbols } = dlopen(libPath, {
 		returns: FFIType.i32,
 	},
 	pty_free_master: { args: [FFIType.ptr], returns: FFIType.void },
-	pty_free_slave: { args: [FFIType.ptr], returns: FFIType.void },
 	pty_free_child: { args: [FFIType.ptr], returns: FFIType.void },
 	pty_free_reader: { args: [FFIType.ptr], returns: FFIType.void },
 	pty_free_writer: { args: [FFIType.ptr], returns: FFIType.void },
