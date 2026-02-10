@@ -121,6 +121,16 @@ bun test
 - TypeScript: loads FFI library, manages resource lifecycles, provides high-level and low-level API
 - Error handling, child process management, and command argument support improvements are planned (see `roadmap.md` for details)
 
+## Prebuilt Binaries
+
+Download from [Releases](https://github.com/your-user/bun-portable-pty/releases):
+
+- Linux: librust_wrapper.so
+- macOS: librust_wrapper.dylib
+- Windows: librust_wrapper.dll
+
+Place in `rust-wrapper/target/release/` and run `bun install`.
+
 ## License
 
 MIT. See LICENSE file.
