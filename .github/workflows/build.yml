@@ -42,7 +42,7 @@ jobs:
 
       - name: Build Rust library
         working-directory: rust-wrapper
-        run: cargo build --release -vv
+        run: cargo build --release --message-format=json
 
       - name: Run Rust lints
         working-directory: rust-wrapper
