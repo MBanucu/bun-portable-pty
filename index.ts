@@ -156,17 +156,9 @@ export function pty_get_writer(master: MasterHandle) {
 	return new WriterHandle(writer);
 }
 
-export function pty_read(
-	reader: ReaderHandle,
-	buf: Buffer,
-) {
+export function pty_read(reader: ReaderHandle, buf: Buffer) {
 	const errOut = new BigUint64Array(1);
-	const bytesRead = symbols.pty_read(
-		reader.handle,
-		buf,
-		buf.length,
-		errOut,
-	);
+	const bytesRead = symbols.pty_read(reader.handle, buf, buf.length, errOut);
 	if (bytesRead === -1n) {
 		const errMsg = extractErrorMessage(errOut[0]);
 		throw new Error(`pty_read failed: ${errMsg}`);
@@ -174,10 +166,7 @@ export function pty_read(
 	return Number(bytesRead);
 }
 
-export function pty_write(
-	writer: WriterHandle,
-	text: string,
-) {
+export function pty_write(writer: WriterHandle, text: string) {
 	const errOut = new BigUint64Array(1);
 	const buf = Buffer.from(`${text}\0`);
 	const bytesWritten = symbols.pty_write(
@@ -220,6 +209,18 @@ export const { symbols } = dlopen(libPath, {
 	},
 	pty_resize: {
 		args: [FFIType.ptr, FFIType.u16, FFIType.u16, FFIType.ptr],
+		returns: FFIType.i32,
+	},
+	pty_child_wait: {
+		args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+		returns: FFIType.i32,
+	},
+	pty_child_kill: {
+		args: [FFIType.ptr, FFIType.ptr],
+		returns: FFIType.i32,
+	},
+	pty_child_is_alive: {
+		args: [FFIType.ptr],
 		returns: FFIType.i32,
 	},
 	pty_free_master: { args: [FFIType.ptr], returns: FFIType.void },

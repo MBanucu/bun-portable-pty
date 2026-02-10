@@ -1,14 +1,14 @@
 import {
-	type MasterHandle,
 	type ChildHandle,
+	type MasterHandle,
 	pty_get_reader,
 	pty_get_writer,
 	pty_open,
 	pty_spawn,
+	pty_write,
 	type ReaderHandle,
 	symbols,
 	type WriterHandle,
-	pty_write,
 } from "./index.ts";
 import { extractErrorMessage } from "./src/utils";
 
@@ -112,5 +112,53 @@ export class Pty implements Disposable {
 	[Symbol.dispose](): void {
 		this.disposableStack.dispose();
 		// Slave was consumed, no free needed
+	}
+
+	/**
+	 * Waits for the child process to exit (non-blocking).
+	 * Returns exit code and signal if exited, null if still running.
+	 */
+	wait(): { exitCode: number | null; signal: number | null } {
+		const exitCodeOut = new Int32Array(1);
+		const signalOut = new Int32Array(1);
+		const errOut = new BigUint64Array(1);
+		const status = symbols.pty_child_wait(
+			this.child.handle,
+			exitCodeOut,
+			signalOut,
+			errOut,
+		);
+		if (status === -1) {
+			const errMsg = extractErrorMessage(errOut[0]);
+			throw new Error(`pty_child_wait failed: ${errMsg}`);
+		} else if (status === 0) {
+			// exited
+			return { exitCode: exitCodeOut[0], signal: signalOut[0] };
+		} else {
+			// still running
+			return { exitCode: null, signal: null };
+		}
+	}
+
+	/**
+	 * Kills the child process.
+	 */
+	kill(): void {
+		const errOut = new BigUint64Array(1);
+		const status = symbols.pty_child_kill(this.child.handle, errOut);
+		if (status !== 0) {
+			const errMsg = extractErrorMessage(errOut[0]);
+			throw new Error(`pty_child_kill failed: ${errMsg}`);
+		}
+	}
+
+	/**
+	 * Checks if the child process is alive.
+	 */
+	isAlive(): boolean {
+		const status = symbols.pty_child_is_alive(this.child.handle);
+		if (status === 1) return true;
+		if (status === 0) return false;
+		throw new Error("pty_child_is_alive failed");
 	}
 }

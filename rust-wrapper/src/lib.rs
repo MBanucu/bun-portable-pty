@@ -380,3 +380,78 @@ pub extern "C" fn pty_free_err_msg(ptr: *mut libc::c_char) {
         } // Reclaims and drops
     }
 }
+
+#[no_mangle]
+pub extern "C" fn pty_child_wait(
+    child: ChildHandle,
+    exit_code_out: *mut i32,
+    signal_out: *mut i32,
+    out_err_msg: *mut *mut libc::c_char,
+) -> i32 {
+    if child.is_null() || exit_code_out.is_null() || signal_out.is_null() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| unsafe {
+        let child_struct = &mut *child;
+        match child_struct.inner.try_wait() {
+            Ok(Some(status)) => {
+                *exit_code_out = if status.success() { 0 } else { 1 };
+                *signal_out = 0;
+                0 // exited
+            }
+            Ok(None) => 1, // still running
+            Err(e) => {
+                let err_str = CString::new(e.to_string())
+                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                *out_err_msg = err_str.into_raw();
+                -1
+            }
+        }
+    }));
+    match result {
+        Ok(code) => code,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn pty_child_kill(child: ChildHandle, out_err_msg: *mut *mut libc::c_char) -> i32 {
+    if child.is_null() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| unsafe {
+        let child_struct = &mut *child;
+        match child_struct.inner.kill() {
+            Ok(_) => 0,
+            Err(e) => {
+                let err_str = CString::new(e.to_string())
+                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                *out_err_msg = err_str.into_raw();
+                -1
+            }
+        }
+    }));
+    match result {
+        Ok(code) => code,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn pty_child_is_alive(child: ChildHandle) -> i32 {
+    if child.is_null() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| unsafe {
+        let child_struct = &mut *child;
+        match child_struct.inner.try_wait() {
+            Ok(Some(_)) => 0, // not alive
+            Ok(None) => 1,    // alive
+            Err(_) => -1,
+        }
+    }));
+    match result {
+        Ok(code) => code,
+        Err(_) => -1,
+    }
+}
