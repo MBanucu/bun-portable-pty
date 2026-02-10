@@ -1,0 +1,69 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [created]  # Trigger on new releases
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy  # Matches your flake.nix extensions
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build Rust library
+        working-directory: rust-wrapper
+        run: cargo build --release --verbose
+
+      - name: Run Rust lints
+        working-directory: rust-wrapper
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run TypeScript checks
+        run: |
+          bun run check:bun
+          bun run check:ts
+
+      - name: Run tests
+        run: bun test
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p artifacts
+          cp rust-wrapper/target/release/librust_wrapper.${{ runner.os == 'Windows' && 'dll' || (runner.os == 'macOS' && 'dylib' || 'so') }} artifacts/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: bun-portable-pty-${{ matrix.os }}
+          path: artifacts/
+          retention-days: 5  # Short for PRs/pushes
+
+      - name: Upload to release (on tag)
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          tag_name: ${{ github.ref_name }}
