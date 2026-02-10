@@ -1,6 +1,4 @@
-// pty.ts (updated)
-
-import { CString, type Pointer } from "bun:ffi"; // For ptr if needed in usage
+import { CString, type Pointer } from "bun:ffi";
 import {
 	asHandle,
 	type ChildHandle,
@@ -9,7 +7,7 @@ import {
 	type SlaveHandle,
 	symbols,
 	type WriterHandle,
-} from "./index.ts"; // Assuming this is in the same dir or adjust path
+} from "./index.ts";
 
 interface Disposable {
 	[Symbol.dispose](): void;
@@ -66,43 +64,31 @@ export class Pty implements Disposable {
 	) {
 		const masterOut = new BigUint64Array(1);
 		const slaveOut = new BigUint64Array(1);
-
 		const status = symbols.pty_open(rows, cols, masterOut, slaveOut);
-		if (status !== 0) {
-			throw new Error(`pty_open failed: ${status}`);
-		}
-
+		if (status !== 0) throw new Error(`pty_open failed: ${status}`);
 		const master = asHandle<MasterHandle>(Number(masterOut[0]));
-		const slave = asHandle<SlaveHandle>(Number(slaveOut[0]));
-
+		let slave = asHandle<SlaveHandle>(Number(slaveOut[0]));
 		if (!master || !slave) {
 			if (master) symbols.pty_free_master(master);
 			if (slave) symbols.pty_free_slave(slave);
 			throw new Error("Failed to get master/slave handles");
 		}
 		this.master = master;
-
-		const errOut = new BigUint64Array(1); // Buffer to hold the returned error pointer (number)
-		errOut[0] = BigInt(0); // Initialize to null
+		const errOut = new BigUint64Array(1);
+		errOut[0] = BigInt(0);
 		const cmdBuf = Buffer.from(`${command}\0`);
-		const childRaw = symbols.pty_spawn(slave, cmdBuf, errOut);
+		const childRaw = symbols.pty_spawn(slave, cmdBuf, null, 0, errOut);
 		const child = asHandle<ChildHandle>(childRaw);
-
-		// Note: slave is consumed by spawn, no need to free
-
+		slave = null; // slave consumed, cannot free or reuse
 		if (!child) {
 			symbols.pty_free_master(this.master);
-
 			throw new Error(extractErrorMessage(errOut[0]));
 		}
 		this.child = child;
-
 		const readerRaw = symbols.pty_get_reader(this.master);
 		const writerRaw = symbols.pty_get_writer(this.master);
-
 		const reader = asHandle<ReaderHandle>(readerRaw);
 		const writer = asHandle<WriterHandle>(writerRaw);
-
 		if (!reader || !writer) {
 			if (reader) symbols.pty_free_reader(reader);
 			if (writer) symbols.pty_free_writer(writer);
@@ -112,16 +98,12 @@ export class Pty implements Disposable {
 		}
 		this.reader = reader;
 		this.writer = writer;
-
-		// Set up optional worker for random messages
 		if (onMessage) {
 			this.worker = new Worker(new URL("./worker.ts", import.meta.url));
 			this.worker.onmessage = (event) => {
-				if (typeof event.data === "string") {
-					onMessage(event.data);
-				}
+				if (typeof event.data === "string") onMessage(event.data);
 			};
-			this.worker.postMessage(reader); // Optional initial message
+			this.worker.postMessage(reader);
 		}
 	}
 

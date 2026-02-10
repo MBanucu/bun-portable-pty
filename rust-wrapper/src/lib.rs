@@ -4,7 +4,7 @@
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize, SlavePty};
 use std::ffi::CStr;
-use std::ffi::{CString};
+use std::ffi::CString;
 use std::io::{Read, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
@@ -64,24 +64,62 @@ pub extern "C" fn pty_open(
     }
 }
 
-
-// Spawn command on slave, consumes slave handle (no need to free slave after)
+// Spawn command on slave, now supporting argv/argc (program arguments)
 // Returns child handle or null on error; sets out_err_msg to error string (caller must free) or null
 #[no_mangle]
-pub extern "C" fn pty_spawn(slave: SlaveHandle, cmd: *const libc::c_char, out_err_msg: *mut *mut libc::c_char) -> ChildHandle {
-    // Note: Adjusted out_err_msg to *mut *mut c_char for pointer-to-pointer (common for out-strings)
+pub extern "C" fn pty_spawn(
+    slave: SlaveHandle,
+    prog: *const libc::c_char,
+    argv: *const *const libc::c_char,
+    argc: usize,
+    out_err_msg: *mut *mut libc::c_char,
+) -> ChildHandle {
     catch_unwind(AssertUnwindSafe(|| unsafe {
-        // *out_err_msg = ptr::null_mut(); // Default to no error
-
         let slave_struct = Box::from_raw(slave);
         let slave_box = slave_struct.inner;
-        let cmd_cstr = CStr::from_ptr(cmd);
-        let cmd_str = cmd_cstr.to_string_lossy().into_owned();
-        let builder = CommandBuilder::new(cmd_str);
+        let prog_cstr = CStr::from_ptr(prog);
+        let prog_str = prog_cstr.to_string_lossy().into_owned();
+        let mut builder = CommandBuilder::new(prog_str);
+
+        // Parse arguments
+        if !argv.is_null() {
+            let args_slice: Vec<&CStr> = if argc > 0 {
+                let raw_args = std::slice::from_raw_parts(argv, argc);
+                raw_args
+                    .iter()
+                    .filter_map(|&arg_ptr| {
+                        if arg_ptr.is_null() {
+                            None
+                        } else {
+                            Some(CStr::from_ptr(arg_ptr))
+                        }
+                    })
+                    .collect()
+            } else {
+                // Null-terminated scan
+                let mut args = vec![];
+                let mut ptr_idx = 0;
+                loop {
+                    let arg_ptr = *argv.add(ptr_idx);
+                    if arg_ptr.is_null() {
+                        break;
+                    }
+                    args.push(CStr::from_ptr(arg_ptr));
+                    ptr_idx += 1;
+                }
+                args
+            };
+            for arg_cstr in args_slice {
+                let arg_str = arg_cstr.to_string_lossy().into_owned();
+                builder.arg(arg_str);
+            }
+        }
+
         let child = match slave_box.spawn_command(builder) {
             Ok(child) => child,
             Err(e) => {
-                let err_str = CString::new(e.to_string()).unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                let err_str = CString::new(e.to_string())
+                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
                 *out_err_msg = err_str.into_raw();
                 return ptr::null_mut();
             }
@@ -205,6 +243,8 @@ pub extern "C" fn pty_free_writer(writer: WriterHandle) {
 #[no_mangle]
 pub extern "C" fn pty_free_err_msg(ptr: *mut libc::c_char) {
     if !ptr.is_null() {
-        unsafe { let _ = CString::from_raw(ptr); }  // Reclaims and drops
+        unsafe {
+            let _ = CString::from_raw(ptr);
+        } // Reclaims and drops
     }
 }

@@ -4,26 +4,12 @@ import path from "node:path";
 // ───────────────────────────────────────────────
 //   Nominal / branded pointer types
 // ───────────────────────────────────────────────
-
 export type Pointer<T = unknown> = number & { __pointer__: null; __brand?: T };
-
 export type MasterHandle = Pointer<{ kind: "MasterPty" }>;
 export type SlaveHandle = Pointer<{ kind: "SlavePty" }>;
 export type ChildHandle = Pointer<{ kind: "Child" }>;
 export type ReaderHandle = Pointer<{ kind: "Reader" }>;
 export type WriterHandle = Pointer<{ kind: "Writer" }>;
-
-// Optional: union type if you ever want to accept any handle
-export type AnyHandle =
-	| MasterHandle
-	| SlaveHandle
-	| ChildHandle
-	| ReaderHandle
-	| WriterHandle;
-
-// ───────────────────────────────────────────────
-//   Library loading
-// ───────────────────────────────────────────────
 
 const libPath = path.join(
 	import.meta.dir,
@@ -37,7 +23,7 @@ export const { symbols } = dlopen(libPath, {
 		returns: FFIType.i32,
 	},
 	pty_spawn: {
-		args: [FFIType.ptr, FFIType.cstring, FFIType.ptr],
+		args: [FFIType.ptr, FFIType.cstring, FFIType.ptr, FFIType.u64, FFIType.ptr],
 		returns: FFIType.ptr,
 	},
 	pty_get_reader: {
@@ -68,10 +54,7 @@ export const { symbols } = dlopen(libPath, {
 	pty_free_err_msg: { args: [FFIType.ptr], returns: FFIType.void },
 } as const);
 
-// ───────────────────────────────────────────────
-//   Helper to safely cast number → branded pointer
-// ───────────────────────────────────────────────
-
+// Export asHandle for pointer conversion
 export function asHandle<T>(n: number | null | undefined): T | null {
 	if (n == null) return null;
 	return n as T;
