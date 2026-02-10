@@ -37,7 +37,7 @@ export const { symbols } = dlopen(libPath, {
 		returns: FFIType.i32,
 	},
 	pty_spawn: {
-		args: [FFIType.ptr, FFIType.cstring],
+		args: [FFIType.ptr, FFIType.cstring, FFIType.ptr],
 		returns: FFIType.ptr,
 	},
 	pty_get_reader: {
@@ -65,6 +65,7 @@ export const { symbols } = dlopen(libPath, {
 	pty_free_child: { args: [FFIType.ptr], returns: FFIType.void },
 	pty_free_reader: { args: [FFIType.ptr], returns: FFIType.void },
 	pty_free_writer: { args: [FFIType.ptr], returns: FFIType.void },
+	pty_free_err_msg: { args: [FFIType.ptr], returns: FFIType.void },
 } as const);
 
 // ───────────────────────────────────────────────

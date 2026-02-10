@@ -1,6 +1,6 @@
 // pty.ts (updated)
 
-import { CString, ptr } from "bun:ffi"; // For ptr if needed in usage
+import { CString, ptr, type Pointer } from "bun:ffi"; // For ptr if needed in usage
 import {
 	asHandle,
 	type ChildHandle,
@@ -66,18 +66,28 @@ export class Pty implements Disposable {
 		}
 		this.master = master;
 
+		const errOut = new BigUint64Array(1);  // Buffer to hold the returned error pointer (number)
+		errOut[0] = BigInt(0);  // Initialize to null
 		const cmdBuf = Buffer.from(`${command}\0`);
-		const childRaw = symbols.pty_spawn(slave, cmdBuf);
+		const childRaw = symbols.pty_spawn(slave, cmdBuf, errOut);
 		const child = asHandle<ChildHandle>(childRaw);
+
+		// Note: slave is consumed by spawn, no need to free
 
 		if (!child) {
 			symbols.pty_free_master(master);
-			symbols.pty_free_slave(slave);
+			const errPtr = Number(errOut[0]) as Pointer;  // Extract the pointer (number)
+			console.log(`pty_spawn failed, error pointer (number): ${errPtr}`);
+			if (errPtr !== 0) {
+				const errMsg = new CString(errPtr);
+				console.error(`Spawn error: ${errMsg}`);
+				symbols.pty_free_err_msg(errPtr);  // Free the native string
+			} else {
+				console.error("Spawn failed with no error message");
+			}
 			throw new Error("Failed to spawn command");
 		}
 		this.child = child;
-
-		// Note: slave is consumed by spawn, no need to free
 
 		const readerRaw = symbols.pty_get_reader(this.master);
 		const writerRaw = symbols.pty_get_writer(this.master);
@@ -103,7 +113,10 @@ export class Pty implements Disposable {
 					onMessage(event.data);
 				}
 			};
+			this.worker.postMessage(reader); // Optional initial message
 		}
+
+
 	}
 
 	/**
@@ -117,20 +130,6 @@ export class Pty implements Disposable {
 		const buf = Buffer.from(data);
 		const written = symbols.pty_write(this.writer, buf, buf.length);
 		return Number(written);
-	}
-
-	/**
-	 * Reads data from the PTY.
-	 *
-	 * @param maxBytes Max bytes to read
-	 * @returns Buffer with read data (subarray), or null on error
-	 */
-	read(maxBytes: number): Buffer | null {
-		if (!this.reader) throw new Error("Reader not available");
-		const buf = Buffer.alloc(maxBytes);
-		const bytesRead = symbols.pty_read(this.reader, buf, maxBytes);
-		if (Number(bytesRead) <= 0) return null;
-		return buf.subarray(0, Number(bytesRead));
 	}
 
 	/**

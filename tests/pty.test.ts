@@ -1,47 +1,40 @@
 import { expect, test } from "bun:test";
 import { Pty } from "../pty.ts";
 
-test("Pty basic operations", async () => {
-	using pty = new Pty(24, 80, "/bin/sh");
+test("Pty worker messages sh", async () => {
+  let receivedMessages: string[] = [];
+  using pty = new Pty(24, 80, "/bin/sh", (msg) => receivedMessages.push(msg));
 
-	await new Promise((resolve) => setTimeout(resolve, 100)); // Wait a bit for the shell to be ready
+  // Give initial prompt time to appear
+  await Bun.sleep(100);
 
-	// Write a command
-	const input = "echo 'Hello, Pty!'\n";
-	const written = pty.write(input);
-	expect(written).toBe(input.length);
+  pty.write("echo Hello from PTY\n");
+  await Bun.sleep(100);
 
-	// Give some time for the shell to process (PTY operations can be async-ish)
-	await new Promise((resolve) => setTimeout(resolve, 100));
+  pty.write("exit\n");
+  await Bun.sleep(100);
 
-	// Read output
-	let output: Buffer | null = null;
-	let attempts = 0;
-	while (!output && attempts < 10) {
-		output = pty.read(4096);
-		if (!output) {
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-		attempts++;
-	}
+  const actual = receivedMessages.join("");
 
-	expect(output).not.toBeNull();
-	const outputStr = output!.toString();
-	expect(outputStr).toContain("Hello, Pty!");
-
-	// Test resize
-	pty.resize(30, 120);
+  // This is the snapshot line
+  expect(actual).toMatchSnapshot();
 });
 
-test("Pty worker messages", async () => {
-	let receivedMessages: string[] = [];
-	using pty = new Pty(24, 80, "/bin/sh", (msg) => receivedMessages.push(msg));
+test("Pty worker messages bash", async () => {
+  let receivedMessages: string[] = [];
+  using pty = new Pty(24, 80, "/usr/bin/env bash", (msg) => receivedMessages.push(msg));
 
-	// Wait for a few messages to be received
-	await new Promise((resolve) => setTimeout(resolve, 3500));
+  // Give initial prompt time to appear
+  await Bun.sleep(100);
 
-	expect(receivedMessages.length).toBeGreaterThanOrEqual(3);
-	for (const msg of receivedMessages) {
-		expect(msg).toMatch(/Random message: [a-z0-9]+/);
-	}
+  pty.write("echo Hello from PTY\n");
+  await Bun.sleep(100);
+
+  pty.write("exit\n");
+  await Bun.sleep(100);
+
+  const actual = receivedMessages.join("");
+
+  // This is the snapshot line
+  expect(actual).toMatchSnapshot();
 });
