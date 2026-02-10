@@ -46,10 +46,11 @@ export class ChildHandle implements Disposable {
 	}
 }
 
+const libName = process.platform === "win32" ? "rust_wrapper" : "librust_wrapper";
 const libPath = path.join(
-	import.meta.dir,
-	"rust-wrapper/target/release",
-	`librust_wrapper.${suffix}`,
+  import.meta.dir,
+  "rust-wrapper/target/release",
+  `${libName}.${suffix}`,
 );
 
 export function pty_open_and_spawn(
