@@ -1,28 +1,14 @@
-import { CString, type Pointer } from "bun:ffi";
 import {
-	asHandle,
-	type ChildHandle,
-	type MasterHandle,
-	type ReaderHandle,
-	type SlaveHandle,
+	ChildHandle,
+	MasterHandle,
+	pty_get_reader,
+	pty_get_writer,
+	pty_open,
+	pty_spawn,
+	ReaderHandle,
 	symbols,
-	type WriterHandle,
+	WriterHandle,
 } from "./index.ts";
-
-interface Disposable {
-	[Symbol.dispose](): void;
-}
-
-function extractErrorMessage(errPtrNumber: bigint): string {
-	const errPtr = Number(errPtrNumber) as Pointer;
-	if (errPtr !== 0) {
-		const errMsg = new CString(errPtr).toString();
-		symbols.pty_free_err_msg(errPtr);
-		return errMsg;
-	} else {
-		return "FFI call failed with no error message";
-	}
-}
 
 /**
  * A class wrapper around the PTY FFI functions that manages resources
@@ -44,6 +30,7 @@ export class Pty implements Disposable {
 	private child: ChildHandle;
 	private reader: ReaderHandle;
 	private writer: WriterHandle;
+	private readonly disposableStack: DisposableStack;
 	private worker: Worker | null = null;
 
 	/**
@@ -52,59 +39,40 @@ export class Pty implements Disposable {
 	 *
 	 * @param rows Initial rows
 	 * @param cols Initial columns
-	 * @param command The command to spawn (e.g., "/bin/sh")
+	 * @param cmd The command to spawn (e.g., "/bin/sh")
+	 * @param argv Arguments for the command
 	 * @param onMessage Optional callback for worker messages
 	 * @throws Error if any step fails
 	 */
 	constructor(
 		rows: number,
 		cols: number,
-		command: string,
+		readonly cmd: string,
+		readonly argv: readonly string[] = [],
 		onMessage?: (message: string) => void,
 	) {
-		const masterOut = new BigUint64Array(1);
-		const slaveOut = new BigUint64Array(1);
-		const status = symbols.pty_open(rows, cols, masterOut, slaveOut);
-		if (status !== 0) throw new Error(`pty_open failed: ${status}`);
-		const master = asHandle<MasterHandle>(Number(masterOut[0]));
-		let slave = asHandle<SlaveHandle>(Number(slaveOut[0]));
-		if (!master || !slave) {
-			if (master) symbols.pty_free_master(master);
-			if (slave) symbols.pty_free_slave(slave);
-			throw new Error("Failed to get master/slave handles");
-		}
+		using disposableStack = new DisposableStack();
+
+		const { master, slave } = pty_open(rows, cols);
+		disposableStack.use(master)
 		this.master = master;
-		const errOut = new BigUint64Array(1);
-		errOut[0] = BigInt(0);
-		const cmdBuf = Buffer.from(`${command}\0`);
-		const childRaw = symbols.pty_spawn(slave, cmdBuf, null, 0, errOut);
-		const child = asHandle<ChildHandle>(childRaw);
-		slave = null; // slave consumed, cannot free or reuse
-		if (!child) {
-			symbols.pty_free_master(this.master);
-			throw new Error(extractErrorMessage(errOut[0]));
-		}
-		this.child = child;
-		const readerRaw = symbols.pty_get_reader(this.master);
-		const writerRaw = symbols.pty_get_writer(this.master);
-		const reader = asHandle<ReaderHandle>(readerRaw);
-		const writer = asHandle<WriterHandle>(writerRaw);
-		if (!reader || !writer) {
-			if (reader) symbols.pty_free_reader(reader);
-			if (writer) symbols.pty_free_writer(writer);
-			symbols.pty_free_child(this.child);
-			symbols.pty_free_master(this.master);
-			throw new Error("Failed to get reader/writer");
-		}
-		this.reader = reader;
-		this.writer = writer;
+
+		this.child = disposableStack.use(pty_spawn(slave, cmd, argv));
+
+		this.reader = disposableStack.use(pty_get_reader(this.master));
+		this.writer = disposableStack.use(pty_get_writer(this.master));
+
 		if (onMessage) {
 			this.worker = new Worker(new URL("./worker.ts", import.meta.url));
 			this.worker.onmessage = (event) => {
 				if (typeof event.data === "string") onMessage(event.data);
 			};
-			this.worker.postMessage(reader);
+			this.worker.postMessage(this.reader);
+
+			disposableStack.adopt(this.worker, (worker) => { worker.terminate() });
 		}
+
+		this.disposableStack = disposableStack.move()
 	}
 
 	/**
@@ -116,7 +84,7 @@ export class Pty implements Disposable {
 	write(data: string): number {
 		if (!this.writer) throw new Error("Writer not available");
 		const buf = Buffer.from(data);
-		const written = symbols.pty_write(this.writer, buf, buf.length);
+		const written = symbols.pty_write(this.writer.handle, buf, buf.length);
 		return Number(written);
 	}
 
@@ -128,21 +96,14 @@ export class Pty implements Disposable {
 	 */
 	resize(rows: number, cols: number): void {
 		if (!this.master) throw new Error("Master not available");
-		symbols.pty_resize(this.master, rows, cols);
+		symbols.pty_resize(this.master.handle, rows, cols);
 	}
 
 	/**
 	 * Disposes all resources in the correct order.
 	 */
 	[Symbol.dispose](): void {
-		if (this.worker) {
-			this.worker.terminate();
-			this.worker = null;
-		}
-		symbols.pty_free_reader(this.reader);
-		symbols.pty_free_writer(this.writer);
-		symbols.pty_free_child(this.child);
-		symbols.pty_free_master(this.master);
+		this.disposableStack.dispose();
 		// Slave was consumed, no free needed
 	}
 }
