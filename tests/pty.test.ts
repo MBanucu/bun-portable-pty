@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Pty } from "../pty.ts";
 
 class Waiter {
-	public resolve: () => void = () => {};
+	public resolve: () => void = () => { };
 	public readonly promise: Promise<void> = new Promise<void>((res) => {
 		this.resolve = res;
 	});
@@ -20,11 +20,21 @@ class Waiter {
 	};
 }
 
-test.each([
-	{ argc: "sh", argv: [] },
-	{ argc: "bash", argv: [] },
-	{ argc: "/usr/bin/env", argv: ["bash"] },
-])("spawn success in interactive terminal: $argc $argv", async (cmd) => {
+const isWindows = process.platform === "win32";
+
+const testMatrix = isWindows
+	? [
+		{ cmd: "cmd.exe", argv: [] },
+		{ cmd: "powershell.exe", argv: [] },
+		{ cmd: "pwsh.exe", argv: [] },
+	]
+	: [
+		{ cmd: "sh", argv: [] },
+		{ cmd: "bash", argv: [] },
+		{ cmd: "/usr/bin/env", argv: ["bash"] },
+	];
+
+test.each(testMatrix)("spawn success in interactive terminal: $cmd $argv", async (cmd) => {
 	const receivedMessages: string[] = [];
 
 	const waiter1 = new Waiter("$");
@@ -35,13 +45,13 @@ test.each([
 
 	const waiters = [waiter1, waiter2, waiter3, waiter4, waiter5];
 
-	let resolveWaitForExit = () => {};
+	let resolveWaitForExit = () => { };
 	const exitPromise = new Promise<void>((res) => {
 		resolveWaitForExit = res;
 	});
 
 	let msgs = "";
-	using pty = new Pty(24, 80, cmd.argc, cmd.argv, (msg) => {
+	using pty = new Pty(24, 80, cmd.cmd, cmd.argv, (msg) => {
 		msgs += msg;
 		receivedMessages.push(msg);
 		while (waiters[0]?.test(msgs)) {
