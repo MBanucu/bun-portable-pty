@@ -35,7 +35,7 @@ self.onmessage = (event: Bun.BunMessageEvent<ReaderHandle>) => {
 			self.postMessage(data);
 		} else {
 			// No more data, break the loop
-      self.postMessage("");
+			self.postMessage("");
 			break;
 		}
 	}

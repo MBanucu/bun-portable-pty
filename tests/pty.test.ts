@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { Pty } from "../pty.ts";
-import { resolve } from "bun";
 
 class Waiter {
-	public resolve: () => void = () => { };
-	public readonly promise: Promise<void> = new Promise<void>((res) => { this.resolve = res });
+	public resolve: () => void = () => {};
+	public readonly promise: Promise<void> = new Promise<void>((res) => {
+		this.resolve = res;
+	});
 	public readonly waitFor: string;
 
 	constructor(waitFor: string) {
@@ -16,7 +17,7 @@ class Waiter {
 			return true;
 		}
 		return false;
-	}
+	};
 }
 test("Pty worker messages sh", async () => {
 	const receivedMessages: string[] = [];
@@ -27,21 +28,17 @@ test("Pty worker messages sh", async () => {
 	const waiter4 = new Waiter("exit");
 	const waiter5 = new Waiter("exit");
 
-	const waiters = [
-		waiter1,
-		waiter2,
-		waiter3,
-		waiter4,
-		waiter5,
-	]
+	const waiters = [waiter1, waiter2, waiter3, waiter4, waiter5];
 
-	let resolveWaitForExit = () => { };
-	const exitPromise = new Promise<void>((res) => { resolveWaitForExit = res });
+	let resolveWaitForExit = () => {};
+	const exitPromise = new Promise<void>((res) => {
+		resolveWaitForExit = res;
+	});
 
 	let msgs = "";
 	using pty = new Pty(24, 80, "sh", (msg) => {
 		msgs += msg;
-		receivedMessages.push(msg)
+		receivedMessages.push(msg);
 		while (waiters.length > 0 && waiters[0]?.test(msgs)) {
 			const waiter = waiters.shift();
 			if (!waiter) break;
@@ -54,7 +51,7 @@ test("Pty worker messages sh", async () => {
 
 	await waiter1.promise; // Wait for initial prompt
 
-	pty.write("echo \"Hello\" \"from\" \"PTY\"\n");
+	pty.write('echo "Hello" "from" "PTY"\n');
 	await waiter2.promise;
 	await waiter3.promise; // Wait for prompt after command
 
@@ -64,7 +61,7 @@ test("Pty worker messages sh", async () => {
 	await exitPromise;
 
 	const actual = receivedMessages.join("");
-	expect(actual).toContain("\"Hello\" \"from\" \"PTY\"");
+	expect(actual).toContain('"Hello" "from" "PTY"');
 	expect(actual).toContain("Hello from PTY");
 });
 
@@ -77,21 +74,17 @@ test("Pty worker messages bash", async () => {
 	const waiter4 = new Waiter("exit");
 	const waiter5 = new Waiter("exit");
 
-	const waiters = [
-		waiter1,
-		waiter2,
-		waiter3,
-		waiter4,
-		waiter5,
-	]
+	const waiters = [waiter1, waiter2, waiter3, waiter4, waiter5];
 
-	let resolveWaitForExit = () => { };
-	const exitPromise = new Promise<void>((res) => { resolveWaitForExit = res });
+	let resolveWaitForExit = () => {};
+	const exitPromise = new Promise<void>((res) => {
+		resolveWaitForExit = res;
+	});
 
 	let msgs = "";
 	using pty = new Pty(24, 80, "bash", (msg) => {
 		msgs += msg;
-		receivedMessages.push(msg)
+		receivedMessages.push(msg);
 		while (waiters.length > 0 && waiters[0]?.test(msgs)) {
 			const waiter = waiters.shift();
 			if (!waiter) break;
@@ -104,7 +97,7 @@ test("Pty worker messages bash", async () => {
 
 	await waiter1.promise; // Wait for initial prompt
 
-	pty.write("echo \"Hello\" \"from\" \"PTY\"\n");
+	pty.write('echo "Hello" "from" "PTY"\n');
 	await waiter2.promise;
 	await waiter3.promise; // Wait for prompt after command
 
@@ -114,6 +107,6 @@ test("Pty worker messages bash", async () => {
 	await exitPromise;
 
 	const actual = receivedMessages.join("");
-	expect(actual).toContain("\"Hello\" \"from\" \"PTY\"");
+	expect(actual).toContain('"Hello" "from" "PTY"');
 	expect(actual).toContain("Hello from PTY");
 });
