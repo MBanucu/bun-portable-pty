@@ -34,6 +34,35 @@ const testMatrix = isWindows
 			{ cmd: "/usr/bin/env", argv: ["bash"] },
 		];
 
+const TIMEOUT_MS = 1000;
+
+async function waitWithTimeout(
+	promise: Promise<void>,
+	waitFor: string,
+	receivedMessages: string[],
+): Promise<void> {
+	try {
+		await Promise.race([
+			promise,
+			new Promise((_, reject) =>
+				setTimeout(
+					() => reject(new Error(`Timeout waiting for "${waitFor}"`)),
+					TIMEOUT_MS,
+				),
+			),
+		]);
+	} catch (err) {
+		if (err instanceof Error) {
+			err.message += ` (while waiting for "${waitFor}")`;
+			console.error(err);
+		}
+		console.error(
+			`Received messages so far: ${JSON.stringify(receivedMessages.join(""))}`,
+		);
+		throw err;
+	}
+}
+
 test.each(
 	testMatrix,
 )("spawn success in interactive terminal: $cmd $argv", async (cmd) => {
@@ -66,16 +95,16 @@ test.each(
 		}
 	});
 
-	await waiter1.promise; // Wait for initial prompt
+	await waitWithTimeout(waiter1.promise, waiter1.waitFor, receivedMessages); // Wait for initial prompt
 
 	pty.write('echo "Hello" "from" "PTY"\n');
-	await waiter2.promise;
-	await waiter3.promise; // Wait for prompt after command
+	await waitWithTimeout(waiter2.promise, waiter2.waitFor, receivedMessages);
+	await waitWithTimeout(waiter3.promise, waiter3.waitFor, receivedMessages); // Wait for prompt after command
 
 	pty.write("exit\n");
-	await waiter4.promise;
-	await waiter5.promise;
-	await exitPromise;
+	await waitWithTimeout(waiter4.promise, waiter4.waitFor, receivedMessages);
+	await waitWithTimeout(waiter5.promise, waiter5.waitFor, receivedMessages);
+	await waitWithTimeout(exitPromise, "exit completion", receivedMessages);
 
 	const actual = receivedMessages.join("");
 	expect(actual).toContain('"Hello" "from" "PTY"');
