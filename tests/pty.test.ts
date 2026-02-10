@@ -23,7 +23,7 @@ class Waiter {
 test.each([
 	"sh",
 	"bash",
-])("spawn error for non-existent command: %s", async (cmd) => {
+])("spawn success in interactive terminal: %s", async (cmd) => {
 	const receivedMessages: string[] = [];
 
 	const waiter1 = new Waiter("$");
