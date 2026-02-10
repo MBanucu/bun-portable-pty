@@ -1,4 +1,4 @@
-import { dlopen, FFIType, ptr, suffix, type Pointer } from "bun:ffi";
+import { dlopen, FFIType, type Pointer, ptr, suffix } from "bun:ffi";
 import path from "node:path";
 import { extractErrorMessage } from "./src/utils";
 
@@ -78,7 +78,13 @@ export function pty_spawn(
 		const argPtr = argPtrs[i];
 		if (argPtr) argvBuf.writeBigUInt64LE(BigInt(argPtr), i * 8);
 	}
-	const childRaw = symbols.pty_spawn(slave.handle, cmdBuf, argvBuf, argPtrs.length, errOut);
+	const childRaw = symbols.pty_spawn(
+		slave.handle,
+		cmdBuf,
+		argvBuf,
+		argPtrs.length,
+		errOut,
+	);
 
 	if (!childRaw) {
 		throw new Error(extractErrorMessage(errOut[0]));
@@ -90,14 +96,19 @@ export function pty_spawn(
 export function pty_open(rows: number, cols: number) {
 	const masterOut = new BigUint64Array(1);
 	const slaveOut = new BigUint64Array(1);
-	const status = symbols.pty_open(rows, cols, masterOut, slaveOut);
+	const errOut = new BigUint64Array(1);
+	const status = symbols.pty_open(rows, cols, masterOut, slaveOut, errOut);
 	const master = Number(masterOut[0]) as Pointer;
 	const slave = Number(slaveOut[0]) as Pointer;
-	
+
 	using disposableStack = new DisposableStack();
-	const masterHandle = master ? disposableStack.use(new MasterHandle(master)) : null;
-	const slaveHandle = slave ? disposableStack.use(new SlaveHandle(slave)) : null;
-	
+	const masterHandle = master
+		? disposableStack.use(new MasterHandle(master))
+		: null;
+	const slaveHandle = slave
+		? disposableStack.use(new SlaveHandle(slave))
+		: null;
+
 	const errorMessages: string[] = [];
 	if (!masterHandle) {
 		errorMessages.push("pty_open failed to create master handle.");
@@ -105,8 +116,11 @@ export function pty_open(rows: number, cols: number) {
 	if (!slaveHandle) {
 		errorMessages.push("pty_open failed to create slave handle.");
 	}
-	
-	if (status !== 0) throw new Error(`pty_open failed: ${status}`);
+
+	if (status !== 0) {
+		const errMsg = extractErrorMessage(errOut[0]);
+		throw new Error(`pty_open failed: ${errMsg}`);
+	}
 	if (!masterHandle || !slaveHandle) {
 		throw new Error(errorMessages.join(" "));
 	} else {
@@ -117,20 +131,71 @@ export function pty_open(rows: number, cols: number) {
 }
 
 export function pty_get_reader(master: MasterHandle) {
-	const readerRaw = symbols.pty_get_reader(master.handle);
-	if (!readerRaw) throw new Error("pty_get_reader failed");
-	return new ReaderHandle(readerRaw);
+	const readerOut = new BigUint64Array(1);
+	const errOut = new BigUint64Array(1);
+	const status = symbols.pty_get_reader(master.handle, readerOut, errOut);
+	if (status !== 0) {
+		const errMsg = extractErrorMessage(errOut[0]);
+		throw new Error(`pty_get_reader failed: ${errMsg}`);
+	}
+	const reader = Number(readerOut[0]) as Pointer;
+	if (!reader) throw new Error("pty_get_reader failed to create reader handle");
+	return new ReaderHandle(reader);
 }
 
 export function pty_get_writer(master: MasterHandle) {
-	const writerRaw = symbols.pty_get_writer(master.handle);
-	if (!writerRaw) throw new Error("pty_get_writer failed");
-	return new WriterHandle(writerRaw);
+	const writerOut = new BigUint64Array(1);
+	const errOut = new BigUint64Array(1);
+	const status = symbols.pty_get_writer(master.handle, writerOut, errOut);
+	if (status !== 0) {
+		const errMsg = extractErrorMessage(errOut[0]);
+		throw new Error(`pty_get_writer failed: ${errMsg}`);
+	}
+	const writer = Number(writerOut[0]) as Pointer;
+	if (!writer) throw new Error("pty_get_writer failed to create writer handle");
+	return new WriterHandle(writer);
+}
+
+export function pty_read(
+	reader: ReaderHandle,
+	buf: Buffer,
+) {
+	const errOut = new BigUint64Array(1);
+	const bytesRead = symbols.pty_read(
+		reader.handle,
+		buf,
+		buf.length,
+		errOut,
+	);
+	if (bytesRead === -1n) {
+		const errMsg = extractErrorMessage(errOut[0]);
+		throw new Error(`pty_read failed: ${errMsg}`);
+	}
+	return Number(bytesRead);
+}
+
+export function pty_write(
+	writer: WriterHandle,
+	text: string,
+) {
+	const errOut = new BigUint64Array(1);
+	const buf = Buffer.from(`${text}\0`);
+	const bytesWritten = symbols.pty_write(
+		writer.handle,
+		buf,
+		buf.length,
+		errOut,
+	);
+	if (bytesWritten === -1n) {
+		const errMsg = extractErrorMessage(errOut[0]);
+		throw new Error(`pty_write failed: ${errMsg}`);
+	}
+	return Number(bytesWritten);
 }
 
 export const { symbols } = dlopen(libPath, {
 	pty_open: {
-		args: [FFIType.u16, FFIType.u16, FFIType.ptr, FFIType.ptr],
+		args: [FFIType.u16, FFIType.u16, FFIType.ptr, FFIType.ptr, FFIType.ptr],
 		returns: FFIType.i32,
 	},
 	pty_spawn: {
@@ -138,24 +203,24 @@ export const { symbols } = dlopen(libPath, {
 		returns: FFIType.ptr,
 	},
 	pty_get_reader: {
-		args: [FFIType.ptr],
-		returns: FFIType.ptr,
+		args: [FFIType.ptr, FFIType.ptr, FFIType.ptr],
+		returns: FFIType.i32,
 	},
 	pty_get_writer: {
-		args: [FFIType.ptr],
-		returns: FFIType.ptr,
+		args: [FFIType.ptr, FFIType.ptr, FFIType.ptr],
+		returns: FFIType.i32,
 	},
 	pty_read: {
-		args: [FFIType.ptr, FFIType.ptr, FFIType.u64],
+		args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.ptr],
 		returns: FFIType.i64,
 	},
 	pty_write: {
-		args: [FFIType.ptr, FFIType.ptr, FFIType.u64],
+		args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.ptr],
 		returns: FFIType.i64,
 	},
 	pty_resize: {
-		args: [FFIType.ptr, FFIType.u16, FFIType.u16],
-		returns: FFIType.void,
+		args: [FFIType.ptr, FFIType.u16, FFIType.u16, FFIType.ptr],
+		returns: FFIType.i32,
 	},
 	pty_free_master: { args: [FFIType.ptr], returns: FFIType.void },
 	pty_free_slave: { args: [FFIType.ptr], returns: FFIType.void },

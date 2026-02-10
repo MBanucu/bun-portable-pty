@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Pty } from "../pty.ts";
 
 class Waiter {
-	public resolve: () => void = () => { };
+	public resolve: () => void = () => {};
 	public readonly promise: Promise<void> = new Promise<void>((res) => {
 		this.resolve = res;
 	});
@@ -35,7 +35,7 @@ test.each([
 
 	const waiters = [waiter1, waiter2, waiter3, waiter4, waiter5];
 
-	let resolveWaitForExit = () => { };
+	let resolveWaitForExit = () => {};
 	const exitPromise = new Promise<void>((res) => {
 		resolveWaitForExit = res;
 	});

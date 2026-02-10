@@ -34,33 +34,52 @@ type ReaderHandle = *mut Reader;
 type WriterHandle = *mut Writer;
 
 // Open PTY pair, return master and slave handles via out params
-// Returns 0 on success, -1 on error
+// Returns 0 on success, -1 on error; sets out_err_msg to error string (caller must free) or null
 #[no_mangle]
 pub extern "C" fn pty_open(
     rows: u16,
     cols: u16,
     master_out: *mut MasterHandle,
     slave_out: *mut SlaveHandle,
+    out_err_msg: *mut *mut libc::c_char,
 ) -> i32 {
+    if master_out.is_null() || slave_out.is_null() {
+        return -1;
+    }
     let result = catch_unwind(AssertUnwindSafe(|| {
         let pty_system = native_pty_system();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
-        unsafe {
-            *master_out = Box::into_raw(Box::new(Master { inner: pair.master }));
-            *slave_out = Box::into_raw(Box::new(Slave { inner: pair.slave }));
+        match pty_system.openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        }) {
+            Ok(pair) => {
+                unsafe {
+                    *master_out = Box::into_raw(Box::new(Master { inner: pair.master }));
+                    *slave_out = Box::into_raw(Box::new(Slave { inner: pair.slave }));
+                }
+                0
+            }
+            Err(e) => {
+                let err_str = CString::new(e.to_string())
+                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                unsafe {
+                    *out_err_msg = err_str.into_raw();
+                }
+                -1
+            }
         }
-        0
     }));
     match result {
-        Ok(_) => 0,
-        Err(_) => -1,
+        Ok(code) => code,
+        Err(_) => {
+            let err_str = CString::new("something is wrong in pty_open").unwrap();
+            unsafe {
+                *out_err_msg = err_str.into_raw();
+            }
+            -1
+        }
     }
 }
 
@@ -82,8 +101,8 @@ pub extern "C" fn pty_spawn(
         let mut builder = CommandBuilder::new(prog_str);
 
         // Parse arguments
-        if !argv.is_null() {
-            let args_slice: Vec<&CStr> = if argc > 0 {
+        if argc > 0 {
+            let args_slice: Vec<&CStr> = {
                 let raw_args = std::slice::from_raw_parts(argv, argc);
                 raw_args
                     .iter()
@@ -95,19 +114,6 @@ pub extern "C" fn pty_spawn(
                         }
                     })
                     .collect()
-            } else {
-                // Null-terminated scan
-                let mut args = vec![];
-                let mut ptr_idx = 0;
-                loop {
-                    let arg_ptr = *argv.add(ptr_idx);
-                    if arg_ptr.is_null() {
-                        break;
-                    }
-                    args.push(CStr::from_ptr(arg_ptr));
-                    ptr_idx += 1;
-                }
-                args
             };
             for arg_cstr in args_slice {
                 let arg_str = arg_cstr.to_string_lossy().into_owned();
@@ -130,68 +136,194 @@ pub extern "C" fn pty_spawn(
 }
 
 // Get a cloned reader from master
+// Returns 0 on success, -1 on error; sets out_err_msg to error string (caller must free) or null
 #[no_mangle]
-pub extern "C" fn pty_get_reader(master: MasterHandle) -> ReaderHandle {
-    catch_unwind(AssertUnwindSafe(|| unsafe {
+pub extern "C" fn pty_get_reader(
+    master: MasterHandle,
+    out_reader: *mut ReaderHandle,
+    out_err_msg: *mut *mut libc::c_char,
+) -> i32 {
+    if master.is_null() || out_reader.is_null() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| unsafe {
         let master_struct = &mut *master;
-        let master_ref = &mut master_struct.inner;
-        let reader = master_ref.try_clone_reader().unwrap();
-        Box::into_raw(Box::new(Reader { inner: reader }))
-    }))
-    .unwrap_or(ptr::null_mut())
+        match master_struct.inner.try_clone_reader() {
+            Ok(reader) => {
+                *out_reader = Box::into_raw(Box::new(Reader { inner: reader }));
+                0
+            }
+            Err(e) => {
+                let err_str = CString::new(e.to_string())
+                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                *out_err_msg = err_str.into_raw();
+                -1
+            }
+        }
+    }));
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            let err_str = CString::new("something is wrong in pty_get_reader").unwrap();
+            unsafe {
+                *out_err_msg = err_str.into_raw();
+            }
+            -1
+        }
+    }
 }
 
 // Get the writer from master (can only be called once)
+// Returns 0 on success, -1 on error; sets out_err_msg to error string (caller must free) or null
 #[no_mangle]
-pub extern "C" fn pty_get_writer(master: MasterHandle) -> WriterHandle {
-    catch_unwind(AssertUnwindSafe(|| unsafe {
+pub extern "C" fn pty_get_writer(
+    master: MasterHandle,
+    out_writer: *mut WriterHandle,
+    out_err_msg: *mut *mut libc::c_char,
+) -> i32 {
+    if master.is_null() || out_writer.is_null() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| unsafe {
         let master_struct = &mut *master;
-        let master_ref = &mut master_struct.inner;
-        let writer = master_ref.take_writer().unwrap();
-        Box::into_raw(Box::new(Writer { inner: writer }))
-    }))
-    .unwrap_or(ptr::null_mut())
+        match master_struct.inner.take_writer() {
+            Ok(writer) => {
+                *out_writer = Box::into_raw(Box::new(Writer { inner: writer }));
+                0
+            }
+            Err(e) => {
+                let err_str = CString::new(e.to_string())
+                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                *out_err_msg = err_str.into_raw();
+                -1
+            }
+        }
+    }));
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            let err_str = CString::new("something is wrong in pty_get_writer").unwrap();
+            unsafe {
+                *out_err_msg = err_str.into_raw();
+            }
+            -1
+        }
+    }
 }
 
 // Read from reader handle
+// Returns number of bytes read, -1 on error; sets out_err_msg to error string (caller must free) or null
 #[no_mangle]
-pub extern "C" fn pty_read(reader: ReaderHandle, buf: *mut u8, len: usize) -> isize {
-    catch_unwind(AssertUnwindSafe(|| unsafe {
+pub extern "C" fn pty_read(
+    reader: ReaderHandle,
+    buf: *mut u8,
+    len: usize,
+    out_err_msg: *mut *mut libc::c_char,
+) -> isize {
+    if reader.is_null() || buf.is_null() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| unsafe {
         let reader_struct = &mut *reader;
-        let reader_ref = &mut reader_struct.inner;
         let slice = std::slice::from_raw_parts_mut(buf, len);
-        reader_ref.read(slice).unwrap() as isize
-    }))
-    .unwrap_or(-1)
+        match reader_struct.inner.read(slice) {
+            Ok(bytes) => bytes as isize,
+            Err(e) => {
+                let err_str = CString::new(e.to_string())
+                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                *out_err_msg = err_str.into_raw();
+                -1
+            }
+        }
+    }));
+    match result {
+        Ok(res) => res,
+        Err(_) => {
+            let err_str = CString::new("something is wrong in pty_read").unwrap();
+            unsafe {
+                *out_err_msg = err_str.into_raw();
+            }
+            -1
+        }
+    }
 }
 
 // Write to writer handle
+// Returns number of bytes written, -1 on error; sets out_err_msg to error string (caller must free) or null
 #[no_mangle]
-pub extern "C" fn pty_write(writer: WriterHandle, buf: *const u8, len: usize) -> isize {
-    catch_unwind(AssertUnwindSafe(|| unsafe {
+pub extern "C" fn pty_write(
+    writer: WriterHandle,
+    buf: *const u8,
+    len: usize,
+    out_err_msg: *mut *mut libc::c_char,
+) -> isize {
+    if writer.is_null() || buf.is_null() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| unsafe {
         let writer_struct = &mut *writer;
-        let writer_ref = &mut writer_struct.inner;
         let slice = std::slice::from_raw_parts(buf, len);
-        writer_ref.write(slice).unwrap() as isize
-    }))
-    .unwrap_or(-1)
+        match writer_struct.inner.write(slice) {
+            Ok(bytes) => bytes as isize,
+            Err(e) => {
+                let err_str = CString::new(e.to_string())
+                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                *out_err_msg = err_str.into_raw();
+                -1
+            }
+        }
+    }));
+    match result {
+        Ok(res) => res,
+        Err(_) => {
+            let err_str = CString::new("something is wrong in pty_write").unwrap();
+            unsafe {
+                *out_err_msg = err_str.into_raw();
+            }
+            -1
+        }
+    }
 }
 
 // Resize via master
+// Returns 0 on success, -1 on error; sets out_err_msg to error string (caller must free) or null
 #[no_mangle]
-pub extern "C" fn pty_resize(master: MasterHandle, rows: u16, cols: u16) {
-    let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+pub extern "C" fn pty_resize(
+    master: MasterHandle,
+    rows: u16,
+    cols: u16,
+    out_err_msg: *mut *mut libc::c_char,
+) -> i32 {
+    if master.is_null() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| unsafe {
         let master_struct = &mut *master;
-        let master_ref = &mut master_struct.inner;
-        master_ref
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
+        match master_struct.inner.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        }) {
+            Ok(_) => 0,
+            Err(e) => {
+                let err_str = CString::new(e.to_string())
+                    .unwrap_or_else(|_| CString::new("Unknown error").unwrap());
+                *out_err_msg = err_str.into_raw();
+                -1
+            }
+        }
     }));
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            let err_str = CString::new("something is wrong in pty_resize").unwrap();
+            unsafe {
+                *out_err_msg = err_str.into_raw();
+            }
+            -1
+        }
+    }
 }
 
 // Free functions

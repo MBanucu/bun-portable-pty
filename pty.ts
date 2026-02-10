@@ -1,14 +1,16 @@
 import {
-	ChildHandle,
-	MasterHandle,
+	type MasterHandle,
+	type ChildHandle,
 	pty_get_reader,
 	pty_get_writer,
 	pty_open,
 	pty_spawn,
-	ReaderHandle,
+	type ReaderHandle,
 	symbols,
-	WriterHandle,
+	type WriterHandle,
+	pty_write,
 } from "./index.ts";
+import { extractErrorMessage } from "./src/utils";
 
 /**
  * A class wrapper around the PTY FFI functions that manages resources
@@ -27,6 +29,7 @@ import {
  */
 export class Pty implements Disposable {
 	private master: MasterHandle;
+	// will be used in the future for more advanced features
 	private child: ChildHandle;
 	private reader: ReaderHandle;
 	private writer: WriterHandle;
@@ -54,7 +57,7 @@ export class Pty implements Disposable {
 		using disposableStack = new DisposableStack();
 
 		const { master, slave } = pty_open(rows, cols);
-		disposableStack.use(master)
+		disposableStack.use(master);
 		this.master = master;
 
 		this.child = disposableStack.use(pty_spawn(slave, cmd, argv));
@@ -69,10 +72,12 @@ export class Pty implements Disposable {
 			};
 			this.worker.postMessage(this.reader);
 
-			disposableStack.adopt(this.worker, (worker) => { worker.terminate() });
+			disposableStack.adopt(this.worker, (worker) => {
+				worker.terminate();
+			});
 		}
 
-		this.disposableStack = disposableStack.move()
+		this.disposableStack = disposableStack.move();
 	}
 
 	/**
@@ -82,10 +87,7 @@ export class Pty implements Disposable {
 	 * @returns Number of bytes written, or -1 on error
 	 */
 	write(data: string): number {
-		if (!this.writer) throw new Error("Writer not available");
-		const buf = Buffer.from(data);
-		const written = symbols.pty_write(this.writer.handle, buf, buf.length);
-		return Number(written);
+		return pty_write(this.writer, data);
 	}
 
 	/**
@@ -96,7 +98,12 @@ export class Pty implements Disposable {
 	 */
 	resize(rows: number, cols: number): void {
 		if (!this.master) throw new Error("Master not available");
-		symbols.pty_resize(this.master.handle, rows, cols);
+		const errOut = new BigUint64Array(1);
+		const status = symbols.pty_resize(this.master.handle, rows, cols, errOut);
+		if (status !== 0) {
+			const errMsg = extractErrorMessage(errOut[0]);
+			throw new Error(`pty_resize failed: ${errMsg}`);
+		}
 	}
 
 	/**

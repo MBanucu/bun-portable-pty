@@ -1,5 +1,5 @@
-import { symbols } from "..";
 import { CString, type Pointer } from "bun:ffi";
+import { symbols } from "..";
 
 export function extractErrorMessage(errPtrNumber?: bigint): string {
 	const errPtr = Number(errPtrNumber) as Pointer;

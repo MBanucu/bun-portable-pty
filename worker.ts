@@ -1,5 +1,5 @@
 import type { ReaderHandle } from ".";
-import { symbols } from ".";
+import { pty_read } from ".";
 
 // worker.ts
 declare var self: Worker;
@@ -8,7 +8,6 @@ declare var self: Worker;
 self.onmessage = (event: Bun.BunMessageEvent<ReaderHandle>) => {
 	const readerHandle = event.data;
 
-	let total = "";
 	const maxBytes = 4096;
 	const buf = Buffer.allocUnsafe(maxBytes);
 
@@ -18,10 +17,9 @@ self.onmessage = (event: Bun.BunMessageEvent<ReaderHandle>) => {
 	 * @returns string with read data or null if pipe closed
 	 */
 	function read() {
-		const bytesRead = symbols.pty_read(readerHandle.handle, buf, maxBytes);
-		if (Number(bytesRead) <= 0) return null;
-		const outputStr = buf.toString(undefined, 0, Number(bytesRead));
-		total += outputStr;
+		const bytesRead = pty_read(readerHandle, buf);
+		if (bytesRead === 0) return null;
+		const outputStr = buf.toString(undefined, 0, bytesRead);
 		return outputStr;
 	}
 
