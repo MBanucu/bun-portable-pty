@@ -21,18 +21,8 @@ self.onmessage = (event: Bun.BunMessageEvent<ReaderHandle>) => {
 	 */
 	function read() {
 		const bytesRead = symbols.pty_read(readerHandle, buf, maxBytes);
-		console.log(`Read ${bytesRead} bytes from PTY`);
 		if (Number(bytesRead) <= 0) return null;
-		for (let i = 0; i < bytesRead; i++) {
-			const bufi = buf[i];
-			if (bufi)
-				console.log(
-					`buf[${i}] = ${buf[i]},\tchar: ${String.fromCharCode(bufi)}`,
-				);
-		}
 		const outputStr = buf.toString(undefined, 0, Number(bytesRead));
-		console.log(outputStr);
-		console.log(`outputStr length: ${outputStr.length}`);
 		total += outputStr;
 		console.log(`total: ${total}`);
 		return outputStr;
@@ -45,6 +35,7 @@ self.onmessage = (event: Bun.BunMessageEvent<ReaderHandle>) => {
 			self.postMessage(data);
 		} else {
 			// No more data, break the loop
+      self.postMessage("");
 			break;
 		}
 	}
