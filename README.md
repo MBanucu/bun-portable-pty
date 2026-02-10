@@ -18,7 +18,7 @@ Portable PTY (pseudo-terminal) bindings for [Bun](https://bun.sh), powered by Ru
 Clone and install:
 
 ```bash
-git clone https://github.com/your-user/bun-portable-pty.git
+git clone https://github.com/MBanucu/bun-portable-pty.git
 cd bun-portable-pty
 bun install
 ```
@@ -123,7 +123,7 @@ bun test
 
 ## Prebuilt Binaries
 
-Download from [Releases](https://github.com/your-user/bun-portable-pty/releases):
+Download from [Releases](https://github.com/MBanucu/bun-portable-pty/releases):
 
 - Linux: librust_wrapper.so
 - macOS: librust_wrapper.dylib
