@@ -18,10 +18,20 @@ self.onmessage = (
 	 * @returns string with read data or null if pipe closed
 	 */
 	function read() {
-		const bytesRead = pty_read(readerHandle, buf);
-		if (bytesRead === 0) return null;
-		const outputStr = buf.toString(undefined, 0, bytesRead);
-		return outputStr;
+		try {
+			const bytesRead = pty_read(readerHandle, buf);
+			if (bytesRead === 0) return null;
+			const outputStr = buf.toString(undefined, 0, bytesRead);
+			return outputStr;
+		} catch (err) {
+			// If an error occurs during read, we can log it and return null to indicate the pipe is closed
+			if (err instanceof Error) {
+				console.error(`Error reading from PTY: ${err.message}`);
+			} else {
+				console.error(`Unknown error reading from PTY: ${err}`);
+			}
+			return null;
+		}
 	}
 
 	/**
