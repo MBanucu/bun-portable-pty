@@ -29,9 +29,14 @@ self.onmessage = (event: Bun.BunMessageEvent<ReaderHandle>) => {
 			// Send data back to main thread
 			self.postMessage(data);
 		} else {
-			// No more data, break the loop
-			self.postMessage("");
-			break;
+			if (process.platform !== "win32") {
+				// No more data, break the loop
+				self.postMessage("")
+				break;
+			} else {
+				// unknown behavior on Windows, let's find out
+				Bun.sleepSync(100);
+			}
 		}
 	}
 };
