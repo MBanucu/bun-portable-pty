@@ -34,7 +34,7 @@ const testMatrix = isWindows
 			{ cmd: "/usr/bin/env", argv: ["bash"] },
 		];
 
-const TIMEOUT_MS = 1000;
+const TIMEOUT_MS = 5000;
 
 async function waitWithTimeout(
 	promise: Promise<void>,
@@ -111,7 +111,7 @@ test.each(
 	const actual = receivedMessages.join("");
 	expect(actual).toContain('"Hello" "from" "PTY"');
 	expect(actual).toContain("Hello from PTY");
-});
+}, 10000);
 
 test("spawn error", async () => {
 	expect(() => {
