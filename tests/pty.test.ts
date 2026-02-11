@@ -106,9 +106,6 @@ test.each(
 
 	pty.write(`exit${newline}`);
 	await waitWithTimeout(waiter4.promise, waiter4.waitFor, receivedMessages);
-	if (isWindows) {
-		pty.write(`exit${newline}`);
-	}
 	await waitWithTimeout(exitPromise, "exit completion", receivedMessages);
 
 	const actual = receivedMessages.join("");
