@@ -75,7 +75,7 @@ test.each(
 	const waiter1 = new Waiter(prompt);
 	const waiter2 = new Waiter(echoAnswer);
 	const waiter3 = new Waiter(prompt);
-	const waiter4 = new Waiter("exit");
+	const waiter4 = new Waiter("exit 1");
 
 	const waiters = [waiter1, waiter2, waiter3, waiter4];
 
@@ -104,7 +104,7 @@ test.each(
 	await waitWithTimeout(waiter2.promise, waiter2.waitFor, receivedMessages);
 	await waitWithTimeout(waiter3.promise, waiter3.waitFor, receivedMessages); // Wait for prompt after command
 
-	pty.write(`exit${newline}`);
+	pty.write(`exit 1${newline}`);
 	await waitWithTimeout(waiter4.promise, waiter4.waitFor, receivedMessages);
 	await waitWithTimeout(exitPromise, "exit completion", receivedMessages);
 
