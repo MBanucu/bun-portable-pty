@@ -19,6 +19,7 @@ jobs:
         include:
           - os: windows-2022
           - os: windows-2025
+          - os: windows-11-arm
           - os: macos-latest
             arch: arm64
           - os: ubuntu-latest
