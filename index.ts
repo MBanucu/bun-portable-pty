@@ -133,7 +133,7 @@ export function pty_read(reader: ReaderHandle, buf: Buffer) {
 
 export function pty_write(writer: WriterHandle, text: string) {
 	const errOut = new BigUint64Array(1);
-	const buf = Buffer.from(`${text}\0`);
+	const buf = Buffer.from(text);
 	const bytesWritten = symbols.pty_write(
 		writer.handle,
 		buf,
