@@ -52,7 +52,7 @@ self.onmessage = (
 			}
 			continue; // Skip sending the original query back to the main thread
 		}
-		
+
 		// Send data back to main thread
 		self.postMessage(data);
 	}
