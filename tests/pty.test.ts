@@ -98,11 +98,11 @@ test.each(
 
 	await waitWithTimeout(waiter1.promise, waiter1.waitFor, receivedMessages); // Wait for initial prompt
 
-	pty.write('echo "Hello" "from" "PTY"\n');
+	pty.write('echo "Hello" "from" "PTY"\r\n');
 	await waitWithTimeout(waiter2.promise, waiter2.waitFor, receivedMessages);
 	await waitWithTimeout(waiter3.promise, waiter3.waitFor, receivedMessages); // Wait for prompt after command
 
-	pty.write("exit\n");
+	pty.write("exit\r\n");
 	await waitWithTimeout(waiter4.promise, waiter4.waitFor, receivedMessages);
 	await waitWithTimeout(exitPromise, "exit completion", receivedMessages);
 
