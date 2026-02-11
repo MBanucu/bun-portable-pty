@@ -1,12 +1,13 @@
-import type { ReaderHandle } from ".";
-import { pty_read } from ".";
+import { pty_read, pty_write, type ReaderHandle, type WriterHandle } from ".";
 
 // worker.ts
 declare var self: Worker;
 
 // Listen for messages from the main thread
-self.onmessage = (event: Bun.BunMessageEvent<ReaderHandle>) => {
-	const readerHandle = event.data;
+self.onmessage = (
+	event: Bun.BunMessageEvent<{ reader: ReaderHandle; writer: WriterHandle }>,
+) => {
+	const { reader: readerHandle, writer: writerHandle } = event.data;
 
 	const maxBytes = 4096;
 	const buf = Buffer.allocUnsafe(maxBytes);
@@ -23,6 +24,17 @@ self.onmessage = (event: Bun.BunMessageEvent<ReaderHandle>) => {
 		return outputStr;
 	}
 
+	/**
+	 * Writes the cursor response to the PTY.
+	 */
+	function writeCursorResponse(): void {
+		const response = "\x1b[1;1R";
+		const _responseBuf = Buffer.from(response);
+		const _bytesWritten = pty_write(writerHandle, response);
+	}
+
+	let handledStartupQuery = false; // Optional: Handle only once at startup
+
 	while (true) {
 		const data = read();
 		if (data) {
@@ -32,6 +44,12 @@ self.onmessage = (event: Bun.BunMessageEvent<ReaderHandle>) => {
 			// No more data, break the loop
 			self.postMessage("");
 			break;
+		}
+
+		// Check for Windows ConPTY cursor query (exact match for simplicity)
+		if (!handledStartupQuery && data === "\x1b[6n") {
+			writeCursorResponse();
+			handledStartupQuery = true; // Prevent repeated handling
 		}
 	}
 };

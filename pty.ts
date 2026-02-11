@@ -68,7 +68,10 @@ export class Pty implements Disposable {
 			this.worker.onmessage = (event) => {
 				if (typeof event.data === "string") onMessage(event.data);
 			};
-			this.worker.postMessage(this.reader);
+			this.worker.postMessage({
+				reader: this.reader,
+				writer: this.writer,
+			});
 
 			disposableStack.adopt(this.worker, (worker) => {
 				worker.terminate();
