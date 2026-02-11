@@ -21,6 +21,7 @@ self.onmessage = (
 		try {
 			const bytesRead = pty_read(readerHandle, buf);
 			if (bytesRead === 0) return null;
+			console.log(`Read ${bytesRead} bytes from PTY`);
 			const outputStr = buf.toString(undefined, 0, bytesRead);
 			return outputStr;
 		} catch (err) {
