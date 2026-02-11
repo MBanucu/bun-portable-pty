@@ -124,7 +124,7 @@ export function pty_get_writer(master: MasterHandle) {
 export function pty_read(reader: ReaderHandle, buf: Buffer) {
 	const errOut = new BigUint64Array(1);
 	const bytesRead = symbols.pty_read(reader.handle, buf, buf.length, errOut);
-	if (bytesRead === -1n) {
+	if (bytesRead < 0n) {
 		const errMsg = extractErrorMessage(errOut[0]);
 		throw new Error(`pty_read failed: ${errMsg}`);
 	}

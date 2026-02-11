@@ -29,27 +29,31 @@ self.onmessage = (
 	 */
 	function writeCursorResponse(): void {
 		const response = "\x1b[1;1R";
-		const _responseBuf = Buffer.from(response);
-		const _bytesWritten = pty_write(writerHandle, response);
+		pty_write(writerHandle, response);
 	}
 
 	let handledStartupQuery = false; // Optional: Handle only once at startup
 
 	while (true) {
 		const data = read();
-		if (data) {
-			// Send data back to main thread
-			self.postMessage(data);
-		} else {
+		if (data === null) {
 			// No more data, break the loop
 			self.postMessage("");
 			break;
 		}
 
 		// Check for Windows ConPTY cursor query (exact match for simplicity)
-		if (!handledStartupQuery && data === "\x1b[6n") {
+		if (!handledStartupQuery && data.includes("\x1b[6n")) {
 			writeCursorResponse();
 			handledStartupQuery = true; // Prevent repeated handling
+			const cleanedData = data.replace("\x1b[6n", ""); // Remove the query from the output
+			if (cleanedData) {
+				self.postMessage(cleanedData); // Send any remaining data
+			}
+			continue; // Skip sending the original query back to the main thread
 		}
+		
+		// Send data back to main thread
+		self.postMessage(data);
 	}
 };
