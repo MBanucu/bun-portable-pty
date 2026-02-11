@@ -69,9 +69,11 @@ test.each(
 	const receivedMessages: string[] = [];
 
 	const prompt = isWindows ? ">" : "$"; // Simplistic prompt check; may need adjustment per shell
+	const newline = isWindows ? "\r\n" : "\n";
+	const echoAnswer = isWindows ? '"Hello" "from" "PTY"' : "Hello from PTY";
 
 	const waiter1 = new Waiter(prompt);
-	const waiter2 = new Waiter("Hello from PTY");
+	const waiter2 = new Waiter(echoAnswer);
 	const waiter3 = new Waiter(prompt);
 	const waiter4 = new Waiter("exit");
 
@@ -98,11 +100,11 @@ test.each(
 
 	await waitWithTimeout(waiter1.promise, waiter1.waitFor, receivedMessages); // Wait for initial prompt
 
-	pty.write('echo "Hello" "from" "PTY"\r\n');
+	pty.write(`echo "Hello" "from" "PTY"${newline}`);
 	await waitWithTimeout(waiter2.promise, waiter2.waitFor, receivedMessages);
 	await waitWithTimeout(waiter3.promise, waiter3.waitFor, receivedMessages); // Wait for prompt after command
 
-	pty.write("exit\r\n");
+	pty.write(`exit${newline}`);
 	await waitWithTimeout(waiter4.promise, waiter4.waitFor, receivedMessages);
 	await waitWithTimeout(exitPromise, "exit completion", receivedMessages);
 
