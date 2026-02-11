@@ -68,9 +68,11 @@ test.each(
 )("spawn success in interactive terminal: $cmd $argv", async (cmd) => {
 	const receivedMessages: string[] = [];
 
-	const waiter1 = new Waiter("$");
+	const prompt = isWindows ? ">" : "$"; // Simplistic prompt check; may need adjustment per shell
+
+	const waiter1 = new Waiter(prompt);
 	const waiter2 = new Waiter("Hello from PTY");
-	const waiter3 = new Waiter("$");
+	const waiter3 = new Waiter(prompt);
 	const waiter4 = new Waiter("exit");
 
 	const waiters = [waiter1, waiter2, waiter3, waiter4];
