@@ -107,6 +107,8 @@ pub unsafe extern "C" fn pty_open_and_spawn(
             }
         };
 
+        drop(pair.slave); // Always drop the pair.slave handle in the parent process after spawning, otherwise, the pipe may not close properly.
+
         *master_out = Box::into_raw(Box::new(Master { inner: pair.master }));
         *child_out = Box::into_raw(Box::new(Child { inner: child }));
         0
